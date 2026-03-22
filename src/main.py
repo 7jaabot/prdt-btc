@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from market_data import BinanceFeed, PricePoint
-from prdt import PRDTClient, PRDTRound
+from pancake import PancakeClient, PancakeRound
 from strategy import Strategy, get_current_window
 from paper_trader import PaperTrader
 
@@ -112,11 +112,11 @@ class PolymarketBot:
 
         # Components
         self.binance = BinanceFeed(buffer_seconds=310)
-        self.prdt = PRDTClient(
-            rpc_url=config.get("prdt", {}).get("rpc_url", None),
-            contract_address=config.get("prdt", {}).get("contract_address", "0x0b9c8c0a04354f41b985c10daf7db30bc66998f5"),
-            use_mock_on_failure=config.get("prdt", {}).get("use_mock_on_failure", True),
-            timeout=config.get("prdt", {}).get("timeout_seconds", 10),
+        self.pancake = PancakeClient(
+            rpc_url=config.get("pancake", {}).get("rpc_url", None),
+            contract_address=config.get("pancake", {}).get("contract_address", "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA"),
+            use_mock_on_failure=config.get("pancake", {}).get("use_mock_on_failure", True),
+            timeout=config.get("pancake", {}).get("timeout_seconds", 8),
         )
         self.strategy = Strategy(config)
         self.paper_trader = PaperTrader(config)
@@ -175,32 +175,27 @@ class PolymarketBot:
             self.logger.debug("No prices in window yet.")
             return
 
-        # Fetch current PRDT round from Polygon (sync in executor)
+        # Fetch current PancakeSwap BNB/USD round from BSC
         loop = asyncio.get_event_loop()
-        round_data = await loop.run_in_executor(None, self.prdt.get_current_round)
+        round_data = await loop.run_in_executor(None, self.pancake.get_current_round)
 
         if round_data is None:
-            self.logger.warning("Could not get PRDT round — skipping this tick.")
+            self.logger.warning("Could not get PancakeSwap round — skipping this tick.")
             return
 
-        # Convert pool ratio to a Polymarket-equivalent "yes_price"
-        # Break-even probability for BULL = bull_amount / (total * (1-fee))
-        # This is the price at which betting BULL has 0 edge → same Kelly logic applies
-        PRDT_FEE = 0.03
-        yes_price_equiv = round_data.bull_ratio / (1.0 - PRDT_FEE) if round_data.bull_ratio > 0 else 0.5
-        yes_price_equiv = min(max(yes_price_equiv, 0.01), 0.99)
+        yes_price_equiv = round_data.yes_price_equiv
 
         self.logger.info(
             f"Tick: {len(prices)} prices | "
-            f"BTC: {prices[-1]:.2f} | "
-            f"Pool: bull={round_data.bull_ratio:.1%} bear={round_data.bear_ratio:.1%} | "
+            f"BNB: {prices[-1]:.2f} | "
+            f"Pool: bull={round_data.bull_ratio:.1%} bear={round_data.bear_ratio:.1%} "
+            f"({round_data.total_bnb:.3f} BNB) | "
             f"YES≡: {yes_price_equiv:.3f} | "
-            f"Pool: ${round_data.total_amount:.0f} | "
             f"Remaining: {window.seconds_remaining:.0f}s"
             + (" [MOCK]" if round_data.is_mock else "")
         )
 
-        # Evaluate strategy (same logic, different price source)
+        # Evaluate strategy (same Kelly logic, pool ratio as price signal)
         signal = self.strategy.evaluate(
             prices=prices,
             yes_price=yes_price_equiv,
@@ -265,16 +260,16 @@ class PolymarketBot:
         self.logger.info("  Polymarket BTC 5mn Paper Trading Bot")
         self.logger.info("="*60)
 
-        # Test PRDT / Polygon connectivity
-        self.logger.info("Testing PRDT Finance / Polygon connectivity...")
+        # Test PancakeSwap / BSC connectivity
+        self.logger.info("Testing PancakeSwap BNB/USD (BSC) connectivity...")
         loop = asyncio.get_event_loop()
-        api_ok = await loop.run_in_executor(None, self.prdt.check_connectivity)
+        api_ok = await loop.run_in_executor(None, self.pancake.check_connectivity)
         if api_ok:
-            self.logger.info("✅ PRDT: Polygon RPC reachable — live on-chain data")
+            self.logger.info("✅ PancakeSwap: BSC reachable — live on-chain data")
         else:
             self.logger.warning(
-                "⚠️  PRDT: Polygon RPC unreachable\n"
-                "   → Running in MOCK DATA mode. Install web3.py: pip install web3"
+                "⚠️  PancakeSwap: BSC unreachable\n"
+                "   → Running in MOCK DATA mode."
             )
 
         self.paper_trader.print_summary()
@@ -338,13 +333,13 @@ def main():
     setup_logging(config)
 
     if args.dry_run:
-        logging.info("Dry run mode — testing PRDT/Polygon connectivity.")
-        client = PRDTClient(
-            rpc_url=config.get("prdt", {}).get("rpc_url", None),
+        logging.info("Dry run mode — testing PancakeSwap/BSC connectivity.")
+        client = PancakeClient(
+            rpc_url=config.get("pancake", {}).get("rpc_url", None),
         )
         ok = client.check_connectivity()
         round_data = client.get_current_round()
-        logging.info(f"Sample PRDT round: {round_data}")
+        logging.info(f"Sample PancakeSwap round: {round_data}")
         sys.exit(0 if ok else 1)
 
     bot = PolymarketBot(config)

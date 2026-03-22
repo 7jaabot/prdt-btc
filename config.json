@@ -8,18 +8,19 @@
     "momentum_window_seconds": 300,
     "min_prob_diff": 0.03
   },
-  "prdt": {
+  "pancake": {
     "rpc_url": null,
-    "contract_address": "0x0b9c8c0a04354f41b985c10daf7db30bc66998f5",
+    "contract_address": "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA",
     "poll_interval_seconds": 5,
-    "timeout_seconds": 10,
+    "timeout_seconds": 8,
     "use_mock_on_failure": true,
     "fee": 0.03,
-    "chain": "polygon"
+    "chain": "bsc",
+    "asset": "BNB/USD"
   },
   "binance": {
-    "ws_url": "wss://stream.binance.com:9443/ws/btcusdt@trade",
-    "symbol": "BTCUSDT"
+    "ws_url": "wss://stream.binance.com:9443/ws/bnbusdt@trade",
+    "symbol": "BNBUSDT"
   },
   "paper_trading": {
     "log_file": "data/paper_trades.json",
