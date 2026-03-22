@@ -202,7 +202,9 @@ class PaperTrader:
         self._trade_counter += 1
         trade_id = f"PT-{int(time.time())}-{self._trade_counter:04d}"
 
-        # Simulate latency impact on entry price (slight slippage)
+        # Simulate latency impact on entry price (slight slippage).
+        # Entry is always based on signal.yes_price (0.50 when use_fair_odds=True),
+        # ensuring symmetric PnL (~$50 win / ~$50 loss for $50 staked).
         latency_slippage = (self.simulate_latency_ms / 1000.0) * 0.001  # tiny
         if signal.side == "YES":
             entry_price = min(0.99, signal.yes_price + latency_slippage)

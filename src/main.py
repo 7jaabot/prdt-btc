@@ -185,17 +185,21 @@ class PolymarketBot:
 
         yes_price_equiv = round_data.yes_price_equiv
 
+        # When use_fair_odds=True, pool price is logged for monitoring only
+        use_fair_odds = self.config.get("strategy", {}).get("use_fair_odds", True)
+        pool_tag = " [INFO ONLY — fair_odds=0.50]" if use_fair_odds else ""
         self.logger.info(
             f"Tick: {len(prices)} prices | "
             f"BNB: {prices[-1]:.2f} | "
             f"Pool: bull={round_data.bull_ratio:.1%} bear={round_data.bear_ratio:.1%} "
             f"({round_data.total_bnb:.3f} BNB) | "
-            f"YES≡: {yes_price_equiv:.3f} | "
+            f"Pool YES≡: {yes_price_equiv:.3f}{pool_tag} | "
             f"Remaining: {window.seconds_remaining:.0f}s"
             + (" [MOCK]" if round_data.is_mock else "")
         )
 
-        # Evaluate strategy (same Kelly logic, pool ratio as price signal)
+        # Evaluate strategy. When use_fair_odds=True, strategy.evaluate() ignores
+        # yes_price_equiv and uses 0.50 internally — pool price is monitoring only.
         signal = self.strategy.evaluate(
             prices=prices,
             yes_price=yes_price_equiv,

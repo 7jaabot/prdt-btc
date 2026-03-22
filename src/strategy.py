@@ -314,6 +314,8 @@ class Strategy:
     5. Returns a Signal if edge exceeds threshold.
     """
 
+    FAIR_ODDS_PRICE = 0.50  # Neutral price used when use_fair_odds=True
+
     def __init__(self, config: dict):
         cfg = config.get("strategy", {})
         self.edge_threshold = cfg.get("edge_threshold", 0.05)
@@ -322,6 +324,7 @@ class Strategy:
         self.entry_window_seconds = cfg.get("entry_window_seconds", 60)
         self.min_prob_diff = cfg.get("min_prob_diff", 0.03)
         self.bankroll = cfg.get("starting_bankroll_usdc", 1000.0)
+        self.use_fair_odds = cfg.get("use_fair_odds", True)
 
     def update_bankroll(self, new_bankroll: float):
         """Update the current bankroll after PnL changes."""
@@ -364,11 +367,24 @@ class Strategy:
             seconds_remaining=window.seconds_remaining,
         )
 
-        # Compute edge
-        edge, side = compute_edge(p_up, yes_price)
+        # Fair-odds mode: use 0.50 as the reference price regardless of pool
+        # This avoids fictitious PnL from 99/1 pool imbalances
+        if self.use_fair_odds:
+            effective_yes_price = self.FAIR_ODDS_PRICE
+            if yes_price != self.FAIR_ODDS_PRICE:
+                logger.info(
+                    f"[INFO ONLY] Pool yes_price={yes_price:.4f} "
+                    f"(ignored — use_fair_odds=true, trading at {self.FAIR_ODDS_PRICE:.2f})"
+                )
+        else:
+            effective_yes_price = yes_price
+
+        # Compute edge using effective price (fair odds or pool price)
+        edge, side = compute_edge(p_up, effective_yes_price)
 
         logger.info(
-            f"Strategy eval: P(Up)={p_up:.3f} | PM={yes_price:.3f} | "
+            f"Strategy eval: P(Up)={p_up:.3f} | "
+            f"effective_price={effective_yes_price:.3f} | "
             f"edge={edge:.3f} | side={side} | remaining={window.seconds_remaining:.1f}s"
         )
 
@@ -377,12 +393,12 @@ class Strategy:
             logger.debug(f"Edge {edge:.3f} < threshold {self.edge_threshold:.3f} — no signal")
             return None
 
-        # Compute position size
+        # Compute position size using effective price
         raw_k, pos_size = compute_position_size(
             edge=edge,
             p_up=p_up,
             side=side,
-            yes_price=yes_price,
+            yes_price=effective_yes_price,
             bankroll=self.bankroll,
             kelly_fraction_cap=self.kelly_fraction_cap,
             max_usdc=self.max_position_usdc,
@@ -396,7 +412,7 @@ class Strategy:
             side=side,
             edge=edge,
             p_up=p_up,
-            yes_price=yes_price,
+            yes_price=effective_yes_price,
             kelly_fraction=raw_k,
             position_size_usdc=pos_size,
             timestamp=time.time(),

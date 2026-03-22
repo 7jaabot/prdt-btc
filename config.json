@@ -6,7 +6,8 @@
     "starting_bankroll_usdc": 1000.0,
     "entry_window_seconds": 60,
     "momentum_window_seconds": 300,
-    "min_prob_diff": 0.03
+    "min_prob_diff": 0.03,
+    "use_fair_odds": true
   },
   "pancake": {
     "rpc_url": null,
