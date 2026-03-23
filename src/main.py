@@ -206,6 +206,8 @@ class PolymarketBot:
             window=window,
             is_mock_data=round_data.is_mock,
             pool_total_bnb=round_data.total_bnb,
+            pool_bull_bnb=round_data.bull_bnb,
+            pool_bear_bnb=round_data.bear_bnb,
         )
 
         if signal and not self._traded_this_window:

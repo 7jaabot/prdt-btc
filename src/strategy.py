@@ -327,8 +327,7 @@ class Strategy:
         self.use_fair_odds = cfg.get("use_fair_odds", True)
 
         pcfg = config.get("pancake", {})
-        self.min_yes_price = pcfg.get("min_yes_price", 0.15)
-        self.max_yes_price = pcfg.get("max_yes_price", 0.85)
+        self.max_bet_share_of_side = pcfg.get("max_bet_share_of_side", 0.10)
         self.min_pool_bnb = pcfg.get("min_pool_bnb", 5.0)
 
     def update_bankroll(self, new_bankroll: float):
@@ -342,6 +341,8 @@ class Strategy:
         window: WindowInfo,
         is_mock_data: bool = False,
         pool_total_bnb: float = 0.0,
+        pool_bull_bnb: float = 0.0,
+        pool_bear_bnb: float = 0.0,
     ) -> Optional[Signal]:
         """
         Evaluate whether to generate a trading signal.
@@ -352,6 +353,8 @@ class Strategy:
             window: Current window information.
             is_mock_data: Whether the order book data is mock.
             pool_total_bnb: Total BNB in the pool (for size filter, only used when use_fair_odds=False).
+            pool_bull_bnb: BNB on the bull side of the pool.
+            pool_bear_bnb: BNB on the bear side of the pool.
 
         Returns:
             Signal if conditions met, None otherwise.
@@ -376,12 +379,6 @@ class Strategy:
 
         # Pool quality filters (only when trading against real pool prices)
         if not self.use_fair_odds:
-            if yes_price < self.min_yes_price or yes_price > self.max_yes_price:
-                logger.info(
-                    f"Pool too skewed: yes_price={yes_price:.4f} "
-                    f"(allowed [{self.min_yes_price:.2f}, {self.max_yes_price:.2f}]) — skipping"
-                )
-                return None
             if pool_total_bnb < self.min_pool_bnb:
                 logger.info(
                     f"Pool too small: {pool_total_bnb:.3f} BNB (min={self.min_pool_bnb:.1f}) — skipping"
@@ -428,6 +425,17 @@ class Strategy:
         if pos_size <= 0:
             logger.debug("Position size is 0 — no signal")
             return None
+
+        if not self.use_fair_odds and prices:
+            bet_bnb = pos_size / prices[-1]  # approximate BNB equivalent
+            side_bnb = pool_bull_bnb if side == "YES" else pool_bear_bnb
+            if side_bnb > 0 and bet_bnb / side_bnb > self.max_bet_share_of_side:
+                logger.info(
+                    f"Bet too large for side: {bet_bnb:.4f} BNB = "
+                    f"{bet_bnb/side_bnb:.1%} of {side} side ({side_bnb:.4f} BNB) "
+                    f"(max={self.max_bet_share_of_side:.0%}) — skipping"
+                )
+                return None
 
         signal = Signal(
             side=side,
