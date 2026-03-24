@@ -44,12 +44,29 @@ from paper_trader import PaperTrader
 # Logging setup
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _cleanup_old_logs(log_dir: str, max_days: int = 30):
+    """Delete log files older than max_days in log_dir."""
+    import glob
+    import time as _time
+    cutoff = _time.time() - max_days * 86400
+    for path in glob.glob(os.path.join(log_dir, "run-*.log")):
+        if os.path.getmtime(path) < cutoff:
+            try:
+                os.remove(path)
+                logging.debug(f"Deleted old log: {path}")
+            except OSError:
+                pass
+
+
 def setup_logging(config: dict, dashboard_mode: bool = False):
     """Configure logging from config.
 
     When dashboard_mode=True, reduces console handler to WARNING level
     (dashboard is the primary display) but keeps file logging at full level.
+    Log files are written as data/logs/run-YYYY-MM-DD.log (one per day).
+    Files older than 30 days are deleted automatically.
     """
+    import datetime
     cfg = config.get("logging", {})
     level_str = cfg.get("level", "INFO")
     level = getattr(logging, level_str, logging.INFO)
@@ -58,9 +75,15 @@ def setup_logging(config: dict, dashboard_mode: bool = False):
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
 
-    # File handler — always at configured level
-    log_file = cfg.get("file", "data/bot.log")
-    os.makedirs(os.path.dirname(log_file) if os.path.dirname(log_file) else ".", exist_ok=True)
+    # Daily log file: data/logs/run-YYYY-MM-DD.log
+    log_dir = "data/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    log_file = os.path.join(log_dir, f"run-{today}.log")
+
+    # Purge logs older than 30 days
+    _cleanup_old_logs(log_dir, max_days=30)
+
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(level)
     file_handler.setFormatter(logging.Formatter(fmt))
