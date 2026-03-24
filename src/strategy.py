@@ -363,6 +363,7 @@ class Strategy:
     def update_bankroll(self, new_bankroll: float):
         """Update the current bankroll after PnL changes."""
         self.bankroll = new_bankroll
+        self.last_skip_reason: Optional[str] = None  # Set when evaluate() returns None
 
     def evaluate(
         self,
@@ -388,7 +389,10 @@ class Strategy:
 
         Returns:
             Signal if conditions met, None otherwise.
+            When returning None, self.last_skip_reason is set with a human-readable reason.
         """
+        self.last_skip_reason = None
+
         # Only trade in the last N seconds of the window
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             logger.debug(
@@ -397,6 +401,7 @@ class Strategy:
             return None
 
         if len(prices) < 5:
+            self.last_skip_reason = f"⏸ Not enough price data ({len(prices)} pts)"
             logger.debug("Insufficient price data for strategy evaluation.")
             return None
 
@@ -410,6 +415,7 @@ class Strategy:
         # Pool quality filters (only when trading against real pool prices)
         if not self.use_fair_odds:
             if pool_total_bnb < self.min_pool_bnb:
+                self.last_skip_reason = f"⏸ Pool too small ({pool_total_bnb:.2f} BNB < {self.min_pool_bnb:.1f} min)"
                 logger.info(
                     f"Pool too small: {pool_total_bnb:.3f} BNB (min={self.min_pool_bnb:.1f}) — skipping"
                 )
@@ -438,6 +444,7 @@ class Strategy:
 
         # Check if edge exceeds threshold (strict >)
         if edge <= self.edge_threshold:
+            self.last_skip_reason = f"⏸ Edge too low ({edge:.3f} ≤ {self.edge_threshold:.2f}) | P(Up)={p_up:.2f} | {side}"
             logger.debug(f"Edge {edge:.3f} < threshold {self.edge_threshold:.3f} — no signal")
             return None
 
@@ -460,6 +467,7 @@ class Strategy:
             # Check opposite side has liquidity (no opponent = no profit even if we win)
             opposite_bnb = pool_bear_bnb if side == "YES" else pool_bull_bnb
             if opposite_bnb < 0.01:
+                self.last_skip_reason = f"⏸ No counterparty ({'BEAR' if side == 'YES' else 'BULL'} side empty)"
                 logger.info(
                     f"Opposite side empty: {'BEAR' if side == 'YES' else 'BULL'} = "
                     f"{opposite_bnb:.4f} BNB — no profit possible, skipping"
@@ -469,6 +477,7 @@ class Strategy:
             bet_bnb = pos_size / prices[-1]  # approximate BNB equivalent
             side_bnb = pool_bull_bnb if side == "YES" else pool_bear_bnb
             if side_bnb > 0 and bet_bnb / side_bnb > self.max_bet_share_of_side:
+                self.last_skip_reason = f"⏸ Bet too large ({bet_bnb:.3f} BNB = {bet_bnb/side_bnb:.0%} of {side} side)"
                 logger.info(
                     f"Bet too large for side: {bet_bnb:.4f} BNB = "
                     f"{bet_bnb/side_bnb:.1%} of {side} side ({side_bnb:.4f} BNB) "

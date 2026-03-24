@@ -399,10 +399,19 @@ class PolymarketBot:
             + (" [MOCK]" if round_data.is_mock else "")
         )
 
+        # Compute P(Up) for dashboard display (before strategy filters)
+        from strategy import estimate_p_up_momentum, window_from_round
+        p_up_display = estimate_p_up_momentum(
+            prices=prices,
+            window_seconds=300.0,
+            seconds_remaining=seconds_to_lock,
+        ) if len(prices) >= 5 else None
+
         # Log evaluation to dashboard
+        p_up_str = f"{p_up_display:.2f}" if p_up_display is not None else "?"
         self.dashboard.log(
             f"Epoch #{current_epoch} | Lock in {seconds_to_lock:.0f}s | "
-            f"Pool: {round_data.total_bnb:.1f} BNB "
+            f"P(Up)={p_up_str} | Pool: {round_data.total_bnb:.1f} BNB "
             f"(bull {round_data.bull_ratio:.0%} / bear {round_data.bear_ratio:.0%})"
             + (" [MOCK]" if round_data.is_mock else "")
         )
@@ -421,7 +430,7 @@ class PolymarketBot:
             if not self._traded_this_epoch:
                 # Log signal to dashboard
                 self.dashboard.log(
-                    f"🎯 Signal: {signal.side} @ edge={signal.edge:.2f} | ${signal.position_size_usdc:.2f}"
+                    f"🎯 Signal: {signal.side} @ edge={signal.edge:.2f} | P(Up)={signal.p_up:.2f} | ${signal.position_size_usdc:.2f}"
                 )
                 self.dashboard.update_status(f"🎯 Entering {signal.side} trade...")
                 self._refresh_display()
@@ -437,7 +446,12 @@ class PolymarketBot:
             else:
                 self.dashboard.update_status("⏸ Already traded this epoch")
         else:
-            self.dashboard.update_status("🔍 Evaluating signal")
+            skip_reason = getattr(self.strategy, "last_skip_reason", None)
+            if skip_reason:
+                self.dashboard.log(skip_reason)
+                self.dashboard.update_status(skip_reason)
+            else:
+                self.dashboard.update_status("🔍 Evaluating signal")
 
         self._refresh_display()
 
