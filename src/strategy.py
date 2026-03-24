@@ -464,6 +464,10 @@ class Strategy:
             return None
 
         if not self.use_fair_odds and prices:
+            logger.debug(
+                f"Pool filter check: bull={pool_bull_bnb:.4f} bear={pool_bear_bnb:.4f} "
+                f"side={side} bet=${pos_size:.2f} @ price={prices[-1]:.2f}"
+            )
             # Check opposite side has liquidity (no opponent = no profit even if we win)
             opposite_bnb = pool_bear_bnb if side == "YES" else pool_bull_bnb
             if opposite_bnb < 0.01:

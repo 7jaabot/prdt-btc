@@ -18,7 +18,7 @@
     "fee": 0.03,
     "chain": "bsc",
     "asset": "BNB/USD",
-    "max_bet_share_of_side": 0.10,
+    "max_bet_share_of_side": 0.25,
     "min_pool_bnb": 1.0
   },
   "binance": {
