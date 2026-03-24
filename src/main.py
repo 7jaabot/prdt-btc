@@ -495,7 +495,7 @@ class PolymarketBot:
                         f"({direction} {pct_change:.3%})"
                     )
                     self.dashboard.log(
-                        f"🔚 Epoch #{resolve_epoch} resolved: BNB {direction} {pct_change:.2%}"
+                        f"🔚 Round #{resolve_epoch} result: BNB {direction} {pct_change:.2%}"
                     )
                     self.trader.resolve_trades(resolve_epoch, bnb_open, bnb_close)
                 else:
@@ -513,7 +513,7 @@ class PolymarketBot:
                             f"({direction} {pct_change:.3%})"
                         )
                         self.dashboard.log(
-                            f"🔚 Epoch #{resolve_epoch} resolved (approx): BNB {direction} {pct_change:.2%}"
+                            f"🔚 Round #{resolve_epoch} result (approx): BNB {direction} {pct_change:.2%}"
                         )
                         self.trader.resolve_trades(resolve_epoch, bnb_open, bnb_close)
                     else:
@@ -545,7 +545,7 @@ class PolymarketBot:
             f"Lock at: {round_data.lock_ts:.0f} (in {round_data.lock_ts - time.time():.0f}s)"
         )
         self.dashboard.log(
-            f"Epoch #{new_epoch} started | BNB: {bnb_str} | "
+            f"🎲 Betting open: round #{new_epoch} | BNB: {bnb_str} | "
             f"Lock in {round_data.lock_ts - time.time():.0f}s"
         )
         self.dashboard.update_status("⏳ Waiting for entry window")
