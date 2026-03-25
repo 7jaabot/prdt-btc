@@ -225,8 +225,9 @@ def estimate_p_up_momentum(
     # P(Up) = fraction of paths where final price > opening price
     p_up_raw = float(np.mean(final_prices > opening_price))
 
-    # Clamp to [0.20, 0.80] — force humility, avoid near-certain bets on 5mn crypto
-    p_up = max(0.20, min(0.80, p_up_raw))
+    # Clamp to [0.35, 0.65] — force humility, avoid near-certain bets on 5mn crypto.
+    # Narrower range means weak momentum ≈ 0.50 (no trade), strong momentum ≈ 0.65 (trade).
+    p_up = max(0.35, min(0.65, p_up_raw))
 
     logger.debug(
         f"GBM estimate: μ={mu:.6f} σ={sigma:.6f} "
