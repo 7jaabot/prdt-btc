@@ -468,6 +468,7 @@ class Dashboard:
             show_edge=False,
         )
         table.add_column("#", style="dim", width=4, justify="right")
+        table.add_column("Epoch", width=8, style="dim")
         table.add_column("Time", width=7)
         table.add_column("Side", width=7)
         table.add_column("Edge", width=6)
@@ -494,10 +495,11 @@ class Dashboard:
             else:
                 pnl_str = "[yellow]…[/yellow]"
 
-            table.add_row(str(trade_num), ts, side_str, edge_str, pnl_str)
+            epoch_str = str(getattr(trade, 'epoch', '-'))
+            table.add_row(str(trade_num), epoch_str, ts, side_str, edge_str, pnl_str)
 
         if not recent:
-            table.add_row("[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]")
+            table.add_row("[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]", "[dim]-[/dim]")
 
         return Panel(
             table,
