@@ -19,7 +19,7 @@
     "chain": "bsc",
     "asset": "BNB/USD",
     "max_bet_share_of_side": 0.25,
-    "min_pool_bnb": 1.0
+    "min_pool_bnb": 0.4
   },
   "binance": {
     "ws_url": "wss://stream.binance.com:9443/ws/bnbusdt@trade",

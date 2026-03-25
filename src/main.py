@@ -551,7 +551,13 @@ class PolymarketBot:
         self.dashboard.update_status("⏳ Waiting for entry window")
 
         # Update strategy bankroll
-        if hasattr(self.trader.metrics, 'bankroll'):
+        if self.mode == "live":
+            # LiveMetrics.bankroll is never populated from on-chain balance → use
+            # starting_bankroll_usdc + cumulative PnL as the effective bankroll.
+            starting = self.config.get("strategy", {}).get("starting_bankroll_usdc", 1000.0)
+            effective_bankroll = starting + self.trader.metrics.total_pnl
+            self.strategy.update_bankroll(effective_bankroll)
+        elif hasattr(self.trader.metrics, 'bankroll'):
             self.strategy.update_bankroll(self.trader.metrics.bankroll)
 
         self._refresh_display()
