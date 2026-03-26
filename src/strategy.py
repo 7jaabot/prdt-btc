@@ -38,6 +38,8 @@ class Signal:
     position_size_usdc: float  # Recommended position size in USDC
     timestamp: float           # Signal generation time
     is_mock: bool = False      # True if based on mock data
+    bull_pct: float = 0.0      # Pool bull % at signal time
+    bear_pct: float = 0.0      # Pool bear % at signal time
 
     def __repr__(self):
         return (

@@ -48,6 +48,10 @@ class Trade:
     bet_bnb: float = 0.0                  # BNB equivalent of the bet
     bnb_price_at_entry: float = 0.0      # BNB/USD at entry time
 
+    # Pool state at entry
+    bull_pct: float = 0.0                 # % of pool on bull side at entry
+    bear_pct: float = 0.0                 # % of pool on bear side at entry
+
     # Resolution fields (filled later)
     bnb_open: Optional[float] = None      # BNB price at window start
     bnb_close: Optional[float] = None     # BNB price at window end
@@ -212,7 +216,7 @@ class PaperTrader:
             "trade_id", "epoch", "timestamp_entry", "time_entry", "timestamp_exit", "time_exit",
             "side", "side_label", "edge_at_entry", "p_up_at_entry", "kelly_fraction",
             "position_size_usdc", "bet_bnb", "bnb_price_at_entry",
-            "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share", "is_mock",
+            "bull_pct", "bear_pct", "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share", "is_mock",
         ]
 
         try:
@@ -283,6 +287,8 @@ class PaperTrader:
             window_end_ts=window.window_end_ts,
             window_index=window.window_index,
             is_mock=signal.is_mock,
+            bull_pct=signal.bull_pct,
+            bear_pct=signal.bear_pct,
             # On-chain fields
             epoch=window.window_index,
             bet_bnb=round(bet_bnb, 8),

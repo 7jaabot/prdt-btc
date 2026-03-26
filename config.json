@@ -16,7 +16,8 @@
     "pool_min_bnb": 0.3,
     "manual_min_payout": 1.5,
     "reversion_min_zscore": 1.5,
-    "reversion_scaling": 0.10
+    "reversion_scaling": 0.10,
+    "follow_min_majority_pct": 0.55
   },
   "pancake": {
     "rpc_url": null,

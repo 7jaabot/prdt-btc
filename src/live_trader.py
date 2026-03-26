@@ -116,6 +116,10 @@ class LiveTrade:
     tx_hash: Optional[str] = None        # Transaction hash (never None after submit)
     tx_status: Optional[str] = None      # "pending", "success", "failed", "retried"
 
+    # Pool state at entry
+    bull_pct: float = 0.0                 # % of pool on bull side at entry
+    bear_pct: float = 0.0                 # % of pool on bear side at entry
+
     # Resolution fields
     bnb_open: Optional[float] = None
     bnb_close: Optional[float] = None
@@ -476,6 +480,8 @@ class LiveTrader:
             window_index=window.window_index,
             epoch=epoch,
             is_mock=signal.is_mock,
+            bull_pct=signal.bull_pct,
+            bear_pct=signal.bear_pct,
             tx_hash=tx_hash,
             tx_status=tx_status,
             outcome="PENDING",
@@ -953,7 +959,7 @@ class LiveTrader:
             "trade_id", "epoch", "timestamp_entry", "time_entry", "timestamp_exit", "time_exit",
             "side", "side_label", "edge_at_entry", "p_up_at_entry", "kelly_fraction",
             "position_size_usdc", "bet_bnb", "bnb_price_at_entry",
-            "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share",
+            "bull_pct", "bear_pct", "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share",
             "tx_hash", "tx_status", "claim_tx_hash", "is_mock",
         ]
 

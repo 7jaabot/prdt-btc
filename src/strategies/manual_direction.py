@@ -133,6 +133,8 @@ class ManualDirectionStrategy(BaseStrategy):
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,
+            bull_pct=pool_bull_bnb / pool_total_bnb if pool_total_bnb > 0 else 0.0,
+            bear_pct=pool_bear_bnb / pool_total_bnb if pool_total_bnb > 0 else 0.0,
         )
         logger.info(f"🎯 Signal generated: {signal}")
         return signal
