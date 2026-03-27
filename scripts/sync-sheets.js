@@ -117,7 +117,87 @@ async function main() {
     console.log(`  ✅ ${actualTab}: ${rows.length - 1} trades synced`);
   }
 
+  // Refresh the Cross-Strategy Epoch Map
+  await refreshEpochMap(sheets, existingTabs);
+
   console.log('Done.');
+}
+
+async function refreshEpochMap(sheets, existingTabs) {
+  const SSID = SPREADSHEET_ID;
+  const STRATS = ['GBM', 'follow_crowd', 'mean_reversion', 'orderbook', 'pool_contrarian', 'manual_direction'];
+  const stratTab = existingTabs.find(t => t.toLowerCase() === '🔗 cross-strategy (epoch)'.toLowerCase())
+    || '🔗 Cross-Strategy (Epoch)';
+
+  if (!existingTabs.some(t => t.toLowerCase().includes('cross-strategy'))) {
+    console.log('  ⏸ Cross-Strategy tab not found, skipping epoch map refresh');
+    return;
+  }
+
+  // Load resolved trades per strategy
+  const stratData = {};
+  const allEpochs = new Set();
+  for (const s of STRATS) {
+    const actualTab = existingTabs.find(t => t.toLowerCase() === s.toLowerCase()) || s;
+    try {
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:V500` });
+      const rows = res.data.values || [];
+      if (rows.length < 2) continue;
+      const headers = rows[0];
+      const epochIdx = headers.indexOf('epoch');
+      const sideIdx = headers.indexOf('side_label');
+      const outcomeIdx = headers.indexOf('outcome');
+      const openIdx = headers.indexOf('bnb_open');
+      const closeIdx = headers.indexOf('bnb_close');
+      const edgeIdx = headers.indexOf('edge_at_entry');
+      stratData[s] = {};
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const epoch = r[epochIdx];
+        if (!epoch) continue;
+        const outcome = r[outcomeIdx] || '';
+        if (outcome !== 'WIN' && outcome !== 'LOSS') continue;
+        allEpochs.add(epoch);
+        stratData[s][epoch] = {
+          side: r[sideIdx] || '',
+          open: parseFloat(r[openIdx]) || 0,
+          close: parseFloat(r[closeIdx]) || 0,
+        };
+      }
+    } catch(e) {
+      console.log(`  ⚠️ Could not load ${s}: ${e.message}`);
+    }
+  }
+
+  const sortedEpochs = [...allEpochs].sort((a,b) => parseInt(a)-parseInt(b));
+
+  // Build epoch map rows (starts at row 21 in the sheet — keep same structure)
+  const epRows = [['Epoch', ...STRATS, 'Actual', 'UP votes', 'DOWN votes']];
+  for (const epoch of sortedEpochs) {
+    const sides = STRATS.map(s => stratData[s]?.[epoch]?.side || '');
+    let actual = '';
+    for (const s of STRATS) {
+      const d = stratData[s]?.[epoch];
+      if (d?.open > 0 && d?.close > 0) { actual = d.close > d.open ? 'UP' : 'DOWN'; break; }
+    }
+    const upVotes = sides.filter(s => s === 'UP').length;
+    const downVotes = sides.filter(s => s === 'DOWN').length;
+    epRows.push([epoch, ...sides, actual, upVotes, downVotes]);
+  }
+
+  // Clear and rewrite from row 20 (header) onward — leaves rows 1-19 (stats/filters) intact
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SSID,
+    range: `'${stratTab}'!A20:J600`,
+  });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SSID,
+    range: `'${stratTab}'!A20`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: epRows },
+  });
+
+  console.log(`  ✅ Epoch Map refreshed: ${sortedEpochs.length} epochs`);
 }
 
 main().catch(e => {
