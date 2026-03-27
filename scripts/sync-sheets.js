@@ -125,7 +125,9 @@ async function main() {
 
 async function refreshEpochMap(sheets, existingTabs) {
   const SSID = SPREADSHEET_ID;
-  const STRATS = ['GBM', 'follow_crowd', 'mean_reversion', 'orderbook', 'pool_contrarian', 'manual_direction'];
+  // Dynamically detect strategy tabs (exclude analysis tabs)
+  const analysisTabs = ['🏆 Strategy Comparison', '🔗 Cross-Strategy (Epoch)', '📊 Deep Edge Analysis', '🎯 Optimal Filters', '📈 PnL Curves'];
+  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t));
   const stratTab = existingTabs.find(t => t.toLowerCase() === '🔗 cross-strategy (epoch)'.toLowerCase())
     || '🔗 Cross-Strategy (Epoch)';
 

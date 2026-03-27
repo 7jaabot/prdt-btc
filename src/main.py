@@ -884,10 +884,6 @@ def main():
     if strategy_key:
         setup_logging(config, strategy_key=strategy_key, trading_mode=mode)
 
-    # If ManualDirection strategy, prompt for direction before bot starts
-    if hasattr(strategy, 'prompt_direction') and strategy.direction is None:
-        strategy.prompt_direction()
-
     bot = PolymarketBot(config, trader, mode=mode, strategy=strategy)
 
     try:
