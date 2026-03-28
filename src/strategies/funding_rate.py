@@ -16,11 +16,10 @@ Edge formula:
 This maps to a realistic win-rate range consistent with empirical studies on
 funding rate as a contrarian signal at 5-minute horizons.
 
-API endpoint: https://fapi.binance.com/fapi/v1/fundingRate?symbol=BNBUSDT&limit=1
-Response: [{"symbol": "BNBUSDT", "fundingTime": <ms>, "fundingRate": "0.00010000", ...}]
-
-Alternatively: https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BNBUSDT
-Returns lastFundingRate + real-time accumulating rate info.
+API endpoint: https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BNBUSDT
+Returns markPrice, indexPrice, lastFundingRate, etc.
+We use the real-time mark-index premium: (markPrice - indexPrice) / indexPrice
+This reflects live funding pressure, unlike lastFundingRate which only updates at settlement.
 """
 
 import logging
@@ -35,10 +34,10 @@ from strategy import Signal, WindowInfo, compute_position_size
 
 logger = logging.getLogger(__name__)
 
-# Typical max funding rate for BNB in normal/stressed markets.
-# Empirically: 0.01% (0.0001) is common, 0.1% (0.001) is extreme.
-# We normalize relative to 0.075% (0.00075) — a moderate-strong signal.
-DEFAULT_MAX_EXPECTED_RATE = 0.00075
+# Typical max mark-index premium for BNB.
+# Real-time premium values range ~0.00005 to 0.002 in volatile conditions.
+# We normalize relative to 0.0005 — a moderate-strong signal for BNB.
+DEFAULT_MAX_EXPECTED_RATE = 0.0005
 
 # p_win boost per unit of normalized edge (max boost = 0.15 → p_win up to 0.65)
 P_WIN_EDGE_SCALE = 0.15
@@ -59,18 +58,20 @@ class FundingRateStrategy(BaseStrategy):
         super().__init__(config)
         cfg = config.get("strategy", {})
 
-        # Thresholds (as fractions, e.g. 0.0001 = 0.01%)
+        # Thresholds for mark-index premium (e.g. 0.00005 = 0.005%)
+        # Premium is more volatile than settlement funding rate, so we can
+        # keep meaningful thresholds while still triggering frequently
         self.positive_threshold: float = cfg.get(
-            "funding_rate_positive_threshold", 0.0001
+            "funding_rate_positive_threshold", 0.00005
         )
         self.negative_threshold: float = cfg.get(
-            "funding_rate_negative_threshold", -0.0001
+            "funding_rate_negative_threshold", -0.00005
         )
 
-        # API endpoint (configurable)
+        # API endpoint — premiumIndex gives real-time rate, not just settlement snapshots
         self.funding_rate_url: str = cfg.get(
             "funding_rate_url",
-            "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BNBUSDT&limit=1",
+            "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BNBUSDT",
         )
 
         # Max expected absolute rate for normalization
@@ -103,7 +104,7 @@ class FundingRateStrategy(BaseStrategy):
         now = time.time()
         if self._cached_rate is not None and (now - self._cache_ts) < CACHE_TTL_SECONDS:
             logger.debug(
-                f"Funding rate cache hit: {self._cached_rate:.6f} "
+                f"Funding premium cache hit: {self._cached_rate:.6f} "
                 f"(age={now - self._cache_ts:.0f}s)"
             )
             return self._cached_rate
@@ -117,34 +118,27 @@ class FundingRateStrategy(BaseStrategy):
                 raw = resp.read().decode("utf-8")
                 data = json.loads(raw)
 
-            # API returns a list: [{"symbol": ..., "fundingRate": "0.00010000", ...}]
-            if isinstance(data, list):
-                if not data:
-                    logger.warning("Binance funding rate API returned empty list")
-                    return None
-                entry = data[0]
-            elif isinstance(data, dict):
-                # premiumIndex endpoint returns a single dict with lastFundingRate
-                entry = data
-            else:
-                logger.warning(f"Unexpected funding rate API response type: {type(data)}")
+            if not isinstance(data, dict):
+                logger.warning(f"Unexpected premiumIndex response type: {type(data)}")
                 return None
 
-            # Support both endpoint schemas
-            rate_key = "fundingRate" if "fundingRate" in entry else "lastFundingRate"
-            if rate_key not in entry:
-                logger.warning(f"No funding rate key in response: {entry}")
+            mark = float(data.get("markPrice", 0))
+            index = float(data.get("indexPrice", 0))
+
+            if index <= 0:
+                logger.warning(f"Invalid indexPrice: {index}")
                 return None
 
-            rate = float(entry[rate_key])
-            self._cached_rate = rate
+            # Real-time premium: positive = longs dominate, negative = shorts dominate
+            premium = (mark - index) / index
+            self._cached_rate = premium
             self._cache_ts = now
 
             logger.info(
-                f"Funding rate fetched: {rate:.6f} "
-                f"({rate * 100:.4f}%) — symbol={entry.get('symbol', '?')}"
+                f"Funding premium fetched: {premium:.8f} "
+                f"({premium * 100:.5f}%) — mark={mark:.2f} index={index:.2f}"
             )
-            return rate
+            return premium
 
         except urllib.error.URLError as exc:
             logger.error(f"Funding rate API network error: {exc}")
@@ -159,7 +153,7 @@ class FundingRateStrategy(BaseStrategy):
         if self._cached_rate is not None:
             age = now - self._cache_ts
             logger.warning(
-                f"Returning stale funding rate cache: {self._cached_rate:.6f} "
+                f"Returning stale funding premium cache: {self._cached_rate:.6f} "
                 f"(age={age:.0f}s)"
             )
             return self._cached_rate
@@ -219,35 +213,35 @@ class FundingRateStrategy(BaseStrategy):
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             return None
 
-        # Fetch funding rate
+        # Fetch real-time mark-index premium
         funding_rate = self._fetch_funding_rate()
 
         if funding_rate is None:
-            self.last_skip_reason = "⏸ Funding rate unavailable (API error)"
-            logger.warning("Skipping: could not fetch funding rate")
+            self.last_skip_reason = "⏸ Funding premium unavailable (API error)"
+            logger.warning("Skipping: could not fetch funding premium")
             return None
 
         # Determine directional signal (contrarian logic)
         if funding_rate > self.positive_threshold:
-            # Longs overloaded → expect down move → bet DOWN (NO)
+            # Positive premium = longs overloaded → expect down move → bet DOWN (NO)
             side = "NO"
             logger.info(
-                f"FR={funding_rate:.6f} > threshold={self.positive_threshold:.6f} "
+                f"Premium={funding_rate:.8f} > threshold={self.positive_threshold:.8f} "
                 f"→ LONGS overloaded → bet DOWN"
             )
 
         elif funding_rate < self.negative_threshold:
-            # Shorts overloaded → expect up move → bet UP (YES)
+            # Negative premium = shorts overloaded → expect up move → bet UP (YES)
             side = "YES"
             logger.info(
-                f"FR={funding_rate:.6f} < threshold={self.negative_threshold:.6f} "
+                f"Premium={funding_rate:.8f} < threshold={self.negative_threshold:.8f} "
                 f"→ SHORTS overloaded → bet UP"
             )
 
         else:
             self.last_skip_reason = (
-                f"⏸ Funding rate neutral ({funding_rate:.6f}), "
-                f"thresholds=[{self.negative_threshold:.6f}, {self.positive_threshold:.6f}]"
+                f"⏸ Premium neutral ({funding_rate:.8f}), "
+                f"thresholds=[{self.negative_threshold:.8f}, {self.positive_threshold:.8f}]"
             )
             logger.info(f"Skipping: {self.last_skip_reason}")
             return None
@@ -307,7 +301,7 @@ class FundingRateStrategy(BaseStrategy):
         )
 
         logger.info(
-            f"🎯 Signal: {signal} | funding_rate={funding_rate:.6f} "
-            f"({funding_rate * 100:.4f}%)"
+            f"🎯 Signal: {signal} | premium={funding_rate:.8f} "
+            f"({funding_rate * 100:.5f}%)"
         )
         return signal
