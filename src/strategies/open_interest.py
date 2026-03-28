@@ -18,7 +18,7 @@ Data source: Binance Futures REST — openInterestHist endpoint (no auth require
   https://fapi.binance.com/futures/data/openInterestHist?symbol=BNBUSDT&period=5m&limit=3
 
 Config keys (under "strategy"):
-  oi_delta_threshold  : float  — minimum |delta OI %| to act (default 0.005 = 0.5%)
+  oi_delta_threshold  : float  — minimum |delta OI %| to act (default 0.0005 = 0.05%)
   oi_period           : str    — OI histogram period (default "5m")
 """
 
@@ -116,7 +116,7 @@ class OpenInterestStrategy(BaseStrategy):
     def __init__(self, config: dict):
         super().__init__(config)
         cfg = config.get("strategy", {})
-        self.oi_delta_threshold: float = cfg.get("oi_delta_threshold", 0.005)
+        self.oi_delta_threshold: float = cfg.get("oi_delta_threshold", 0.0005)
         self.oi_period: str = cfg.get("oi_period", "5m")
 
         # Minimum price momentum magnitude to confirm direction (fraction, e.g. 0.001 = 0.1%)

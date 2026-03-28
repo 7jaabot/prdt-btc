@@ -93,7 +93,8 @@ class CorrelationArbitrageStrategy(BaseStrategy):
         cfg = config.get("strategy", {})
 
         # Minimum weighted BTC/ETH move required to trigger a signal (0.3%)
-        self.corr_btc_threshold: float = cfg.get("corr_btc_threshold", 0.003)
+        # Lowered from 0.003 — observed weighted moves: median=0.0008, p90=0.003
+        self.corr_btc_threshold: float = cfg.get("corr_btc_threshold", 0.0012)
 
         # BNB must have moved less than this fraction of the BTC/ETH impulse
         self.corr_lag_threshold: float = cfg.get("corr_lag_threshold", 0.5)

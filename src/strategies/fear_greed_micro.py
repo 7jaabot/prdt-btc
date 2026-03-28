@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 BINANCE_BOOK_URL = "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BNBUSDT"
 BINANCE_24HR_URL = "https://api.binance.com/api/v3/ticker/24hr?symbol=BNBUSDT"
 
-# Empirical baseline for MFI (calibré sur données BNB/USDT spot, spread typique ~0.01-0.02%)
-_MFI_BASELINE_DEFAULT = 0.0002       # ~0.02% spread * vol normalisé à 1
-_MFI_BASELINE_STD_DEFAULT = 0.00015  # std empirique observée
+# Empirical baseline for MFI (calibré sur range BNB/USDT 24h)
+# Typical 24h range ~1-2% → MFI ~0.01-0.02, stressed ~0.03-0.05
+_MFI_BASELINE_DEFAULT = 0.015        # ~1.5% daily range in calm market
+_MFI_BASELINE_STD_DEFAULT = 0.008    # std empirique observée
 
 # HTTP timeout pour les appels Binance
 _REQUEST_TIMEOUT = 3.0  # secondes
@@ -60,8 +61,9 @@ class FearGreedMicroStrategy(BaseStrategy):
         cfg = config.get("strategy", {})
 
         # Seuils Fear & Greed
-        self.fear_threshold: float = cfg.get("fgm_fear_threshold", 0.0005)
-        self.greed_threshold: float = cfg.get("fgm_greed_threshold", 0.0001)
+        # Fear = high MFI (wide range, panic), Greed = low MFI (tight range, complacency)
+        self.fear_threshold: float = cfg.get("fgm_fear_threshold", 0.025)
+        self.greed_threshold: float = cfg.get("fgm_greed_threshold", 0.008)
 
         # Volume spike : ratio volume_now/volume_avg_24h > ce seuil = spike
         self.volume_spike_factor: float = cfg.get("fgm_volume_spike_factor", 1.5)
@@ -134,13 +136,16 @@ class FearGreedMicroStrategy(BaseStrategy):
         Returns:
             (mfi, spread_pct, volatility_factor, volume_spike)
 
-        Formula:
-            mid_price = (bid + ask) / 2
-            spread_pct = (ask - bid) / mid_price
-            volatility_factor = price_change_pct_24h / 100  (normalized to fraction)
-            mfi = spread_pct * (1 + volatility_factor)
-            volume_spike = volume_24h / avg_volume > spike_factor
-                           (here we use high-low range as a proxy for avg daily range)
+        Formula (v2 — volatility-based, not spread-based):
+            BNB spot spread is always 1 tick (~0.001%) on Binance — useless as a signal.
+            Instead we use the 24h high-low range as a volatility proxy:
+                range_pct = (high - low) / weighted_avg_price
+            Combined with price change momentum:
+                vol_factor = abs(priceChangePercent) / 100
+            MFI = range_pct * (1 + vol_factor)
+
+            High MFI → wide range + strong momentum = Fear (panic selling/buying)
+            Low MFI  → tight range + low momentum = Greed/complacency
         """
         bid = book["bid"]
         ask = book["ask"]
@@ -148,20 +153,22 @@ class FearGreedMicroStrategy(BaseStrategy):
 
         spread_pct = (ask - bid) / mid_price if mid_price > 0 else 0.0
 
-        # Volatility factor : abs(priceChangePercent) normalized
-        # 2% daily change → vol_factor = 0.02
+        # Volatility factor from 24h price change
         vol_pct = stats["price_change_pct"]  # already abs
         volatility_factor = vol_pct / 100.0
 
-        # MFI : spread amplifié par la volatilité
-        # Quand spread = 0.0001 (1bp) et vol = 2% → MFI = 0.0001 * 1.02 ≈ 0.000102
-        # Quand spread = 0.0005 (5bp) et vol = 5% → MFI = 0.0005 * 1.05 ≈ 0.000525
-        mfi = spread_pct * (1.0 + volatility_factor)
+        # Range-based MFI: (high - low) / avg_price gives true intraday volatility
+        high = stats.get("high", 0)
+        low = stats.get("low", 0)
+        avg_price = stats.get("weighted_avg_price", mid_price)
+        range_pct = (high - low) / avg_price if avg_price > 0 else 0.0
 
-        # Volume spike : on compare le volume 24h au volume médian attendu
-        # Binance ne fournit pas de volume "typique", on utilise le count de trades
-        # comme proxy. Un count élevé + spread bas = FOMO/Greed
-        # Heuristique : count > 1M trades / 24h = spike (BNB spot typique : ~800k)
+        # MFI = range amplified by directional momentum
+        # Typical: range=1% + vol=0.5% → MFI = 0.01 * 1.005 ≈ 0.01
+        # Stressed: range=4% + vol=3% → MFI = 0.04 * 1.03 ≈ 0.041
+        mfi = range_pct * (1.0 + volatility_factor)
+
+        # Volume spike detection
         volume_spike = stats["count"] > (800_000 * self.volume_spike_factor)
 
         return mfi, spread_pct, volatility_factor, volume_spike

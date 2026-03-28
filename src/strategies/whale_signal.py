@@ -71,8 +71,8 @@ KNOWN_EXCHANGES: set[str] = {
     # "0x18B2A687610328590Bc8F2e5fEdDe3b582A49cdA".lower(),  # PancakeSwap Prediction V2
 }
 
-# BSC RPC public par défaut (Ankr, sans clé)
-DEFAULT_BSC_RPC = "https://rpc.ankr.com/bsc"
+# BSC RPC public par défaut (Binance official dataseed — no API key needed)
+DEFAULT_BSC_RPC = "https://bsc-dataseed.binance.org"
 WEI_PER_BNB = 10**18
 
 

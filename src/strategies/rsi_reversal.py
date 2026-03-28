@@ -6,8 +6,8 @@ mean-reversion moves over the following 5 minutes with ~55-60% win rate.
 
 Logic:
 - Compute RSI(5) and RSI(14) on 1m Binance klines (BNBUSDT)
-- RSI(5) < 15 AND RSI(14) < 35  → extreme oversold  → bet UP
-- RSI(5) > 85 AND RSI(14) > 65  → extreme overbought → bet DOWN
+- RSI(5) < 25 AND RSI(14) < 40  → extreme oversold  → bet UP
+- RSI(5) > 75 AND RSI(14) > 60  → extreme overbought → bet DOWN
 - Edge is proportional to how far RSI is beyond the threshold
 - Volume spike confirmation boosts edge slightly
 
@@ -72,12 +72,15 @@ class RSIReversalStrategy(BaseStrategy):
         self.rsi_period_slow: int = cfg.get("rsi_period_slow", 14)
 
         # Oversold thresholds (bet UP when both below)
-        self.rsi_oversold_fast: float = cfg.get("rsi_oversold_fast", 15.0)
-        self.rsi_oversold_slow: float = cfg.get("rsi_oversold_slow", 35.0)
+        # Calibrated from observed RSI distributions on 1m BNB klines:
+        #   RSI(5) p5=18, RSI(14) p5=33 — old thresholds (15/35) never triggered
+        self.rsi_oversold_fast: float = cfg.get("rsi_oversold_fast", 25.0)
+        self.rsi_oversold_slow: float = cfg.get("rsi_oversold_slow", 40.0)
 
         # Overbought thresholds (bet DOWN when both above)
-        self.rsi_overbought_fast: float = cfg.get("rsi_overbought_fast", 85.0)
-        self.rsi_overbought_slow: float = cfg.get("rsi_overbought_slow", 65.0)
+        # RSI(5) p95=81, RSI(14) p95=70 — old thresholds (85/65) nearly impossible
+        self.rsi_overbought_fast: float = cfg.get("rsi_overbought_fast", 75.0)
+        self.rsi_overbought_slow: float = cfg.get("rsi_overbought_slow", 60.0)
 
         # How many 1m klines to fetch (need at least slow_period + a few buffer)
         self._kline_limit: int = max(40, self.rsi_period_slow * 3)

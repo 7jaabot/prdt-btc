@@ -205,8 +205,9 @@ class OrderFlowStrategy(BaseStrategy):
 
         # ── Direction and p_up ──────────────────────────────────────────────
         # Map OFI ∈ [-1, 1] to P(Up) ∈ [0.35, 0.65].
-        # P(Up) = 0.5 + OFI * 0.15  (max shift ±0.15 at |OFI|=1)
-        p_up_raw = 0.5 + ofi * 0.15
+        # P(Up) = 0.5 + OFI * 0.30  (max shift ±0.30 at |OFI|=1)
+        # Old factor 0.15 produced edges too low to ever pass edge_threshold
+        p_up_raw = 0.5 + ofi * 0.30
         p_up = max(0.35, min(0.65, p_up_raw))
 
         # ── Edge vs fair odds ───────────────────────────────────────────────
