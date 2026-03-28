@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.1-70b-versatile"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
@@ -178,28 +178,28 @@ class LLMPriceActionStrategy(BaseStrategy):
             logger.error("[LLM] No GROQ_API_KEY configured")
             return None
 
-        payload = json.dumps({
-            "model": GROQ_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 200,
-        }).encode("utf-8")
+        import requests as req_lib
 
         try:
-            req = urllib.request.Request(
+            start = time.time()
+            resp = req_lib.post(
                 GROQ_API_URL,
-                data=payload,
+                json={
+                    "model": GROQ_MODEL,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 200,
+                },
                 headers={
-                    "Content-Type": "application/json",
                     "Authorization": f"Bearer {self.groq_api_key}",
                 },
+                timeout=self._http_timeout,
             )
-            start = time.time()
-            with urllib.request.urlopen(req, timeout=self._http_timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            resp.raise_for_status()
+            data = resp.json()
             latency = time.time() - start
 
             content = data["choices"][0]["message"]["content"].strip()
@@ -226,9 +226,9 @@ class LLMPriceActionStrategy(BaseStrategy):
                 "latency": latency,
             }
 
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")[:200] if e.fp else ""
-            logger.error(f"[LLM] Groq API HTTP {e.code}: {body}")
+        except req_lib.exceptions.HTTPError as e:
+            body = e.response.text[:200] if e.response else ""
+            logger.error(f"[LLM] Groq API HTTP {e.response.status_code if e.response else '?'}: {body}")
         except json.JSONDecodeError as e:
             logger.error(f"[LLM] Failed to parse LLM response as JSON: {e}")
         except Exception as e:
