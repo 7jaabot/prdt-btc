@@ -310,7 +310,14 @@ def select_mode_interactive(config: dict) -> tuple[str, object, object]:
 
     # Select strategy FIRST so we can set paths before creating the trader
     strategy = select_strategy_interactive(config)
-    strategy_key = next((k for k, v in STRATEGIES.items() if isinstance(strategy, v)), "unknown")
+
+    # For CombinedStrategy, build a unique key with PID to allow parallel instances
+    from strategies.combined import CombinedStrategy
+    if isinstance(strategy, CombinedStrategy):
+        sub_names = [s[0] for s in strategy.strategies]
+        strategy_key = "combined_" + "_".join(sorted(sub_names)) + f"_{os.getpid()}"
+    else:
+        strategy_key = next((k for k, v in STRATEGIES.items() if isinstance(strategy, v)), "unknown")
 
     if choice == "1":
         config.setdefault("live_trading", {})["log_file"] = f"logs/live/{strategy_key}/{strategy_key}.json"
@@ -962,7 +969,12 @@ def main():
     else:
         # Interactive menu — strategy paths are set inside before trader creation
         mode, trader, strategy = select_mode_interactive(config)
-        strategy_key = next((k for k, v in STRATEGIES.items() if isinstance(strategy, v)), "unknown")
+        from strategies.combined import CombinedStrategy
+        if isinstance(strategy, CombinedStrategy):
+            sub_names = [s[0] for s in strategy.strategies]
+            strategy_key = "combined_" + "_".join(sorted(sub_names)) + f"_{os.getpid()}"
+        else:
+            strategy_key = next((k for k, v in STRATEGIES.items() if isinstance(strategy, v)), "unknown")
 
     # Reconfigure logging with strategy- and mode-specific log dir
     if strategy_key:
