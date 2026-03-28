@@ -154,6 +154,11 @@ class PaperTrader:
             # Recompute metrics from loaded trades
             self._recompute_metrics()
 
+            # Resume trade counter from the last loaded trade
+            if self._trades:
+                self._trade_counter = len(self._trades)
+                logger.info(f"Trade counter resumed at {self._trade_counter}")
+
         except (json.JSONDecodeError, TypeError, KeyError) as e:
             logger.warning(f"Failed to load trades from {self.log_file}: {e}. Starting fresh.")
 

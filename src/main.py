@@ -299,29 +299,22 @@ def select_mode_interactive(config: dict) -> tuple[str, object, object]:
     print("  BNB Up/Down 5mn Trading Bot")
     print("=" * 40)
     print("  [1] 🔴 Live Trading")
-    print("  [2] 📝 Paper Trading (fresh run)")
-    print("  [3] 📝 Paper Trading (continue)")
+    print("  [2] 📝 Paper Trading")
     print("=" * 40)
 
     while True:
         choice = input("Select mode: ").strip()
-        if choice in ("1", "2", "3"):
+        if choice in ("1", "2"):
             break
-        print("Invalid choice. Please enter 1, 2, or 3.")
+        print("Invalid choice. Please enter 1 or 2.")
 
     # Select strategy FIRST so we can set paths before creating the trader
     strategy = select_strategy_interactive(config)
     strategy_key = next((k for k, v in STRATEGIES.items() if isinstance(strategy, v)), "unknown")
 
     if choice == "1":
-        # Apply strategy paths before creating live trader
         config.setdefault("live_trading", {})["log_file"] = f"logs/live/{strategy_key}/{strategy_key}.json"
         mode, trader = _init_live_mode(config)
-    elif choice == "2":
-        config.setdefault("paper_trading", {})["log_file"] = f"logs/paper/{strategy_key}/{strategy_key}.json"
-        reset_paper_trades(config)
-        trader = PaperTrader(config)
-        mode = "paper"
     else:
         config.setdefault("paper_trading", {})["log_file"] = f"logs/paper/{strategy_key}/{strategy_key}.json"
         trader = PaperTrader(config)
