@@ -120,6 +120,12 @@ class LiveTrade:
     bull_pct: float = 0.0                 # % of pool on bull side at entry
     bear_pct: float = 0.0                 # % of pool on bear side at entry
 
+    # Final pool state (after lock — no more bets)
+    final_bull_pct: float = 0.0           # % of pool on bull side at lock
+    final_bear_pct: float = 0.0           # % of pool on bear side at lock
+    final_total_bnb: float = 0.0          # Total BNB in pool at lock
+    pool_drift_pct: float = 0.0           # abs(final_bull_pct - bull_pct) — how much the pool shifted
+
     # Resolution fields
     bnb_open: Optional[float] = None
     bnb_close: Optional[float] = None
@@ -755,6 +761,13 @@ class LiveTrader:
             trade.bnb_close = close_price
             trade.timestamp_exit = time.time()
 
+            # Capture final pool state (round_data is already fetched above)
+            if round_data.total_bnb > 0:
+                trade.final_total_bnb = round_data.total_bnb
+                trade.final_bull_pct = round_data.bull_bnb / round_data.total_bnb
+                trade.final_bear_pct = round_data.bear_bnb / round_data.total_bnb
+                trade.pool_drift_pct = abs(trade.final_bull_pct - trade.bull_pct)
+
             if won:
                 # Try to compute real PnL from on-chain reward pool
                 pnl_usdc, payout_per_bnb = self._fetch_round_pnl(trade, trade.bnb_price_at_entry)
@@ -906,6 +919,18 @@ class LiveTrader:
             trade.bnb_open = bnb_open
             trade.bnb_close = bnb_close
             trade.timestamp_exit = time.time()
+
+            # Fetch final pool state (available for all resolved trades)
+            if self._pancake_client is not None:
+                try:
+                    round_data = self._pancake_client.get_round_by_epoch(trade.epoch)
+                    if round_data is not None and round_data.total_bnb > 0:
+                        trade.final_total_bnb = round_data.total_bnb
+                        trade.final_bull_pct = round_data.bull_bnb / round_data.total_bnb
+                        trade.final_bear_pct = round_data.bear_bnb / round_data.total_bnb
+                        trade.pool_drift_pct = abs(trade.final_bull_pct - trade.bull_pct)
+                except Exception as e:
+                    logger.debug(f"Could not fetch final pool state for epoch {trade.epoch}: {e}")
 
             if won:
                 # Fetch real payout from on-chain round data
@@ -1108,7 +1133,9 @@ class LiveTrader:
             "trade_id", "epoch", "timestamp_entry", "time_entry", "timestamp_exit", "time_exit",
             "side", "side_label", "edge_at_entry", "p_up_at_entry", "kelly_fraction",
             "position_size_usdc", "bet_bnb", "bnb_price_at_entry",
-            "bull_pct", "bear_pct", "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share",
+            "bull_pct", "bear_pct",
+            "final_bull_pct", "final_bear_pct", "final_total_bnb", "pool_drift_pct",
+            "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share",
             "tx_hash", "tx_status", "claim_tx_hash", "is_mock",
         ]
 
