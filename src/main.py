@@ -423,9 +423,16 @@ class PolymarketBot:
         self._last_poll_ts: float = 0.0  # when we last polled the contract
         self._in_entry_window: bool = False  # whether we're currently in entry window
         self._poll_interval = config.get("polymarket", {}).get("poll_interval_seconds", 5)
-        self._min_seconds_before_lock = config.get("strategy", {}).get("min_seconds_before_lock", 15)
+        self._min_seconds_before_lock = config.get("strategy", {}).get("min_seconds_before_lock", 4)
         self._live_ref = None  # Rich Live instance (set during run())
         self._live_close_ts: float | None = None  # close_ts of the live round (N-1)
+
+        # Sniper phase state (per epoch)
+        _scfg = config.get("strategy", {})
+        self._sniper_window_seconds: float = _scfg.get("sniper_window_seconds", 7)
+        self._prefetch_done: bool = False    # Phase 1 complete
+        self._sniped_this_epoch: bool = False  # Phase 2 complete (sniper shot fired)
+        self._sniper_tx_hash: str | None = None  # tx hash from fire_transaction (live mode)
 
     def _refresh_display(self):
         """Push a fresh render to the Live display if it's active."""
@@ -554,20 +561,33 @@ class PolymarketBot:
                 f"Balance: {bankroll_str}"
             )
 
-        # Only evaluate in the entry window (last N seconds before lock)
+        # Get price series from round's start_ts (used in all phases)
+        window_prices_raw = self.binance.get_window_prices(round_data.start_ts)
+        prices = [pp.price for pp in window_prices_raw]
+
+        # ── Phase 0: Outside entry window → wait ─────────────────────────────
         if not self._in_entry_window:
             if seconds_to_lock <= 0:
                 self.dashboard.update_status("🔒 Round locked")
+                # Phase 3: Verify fired TX (live mode only, after lock)
+                if (
+                    self.mode == "live"
+                    and self._sniper_tx_hash is not None
+                    and not getattr(self, '_sniper_verified', False)
+                    and hasattr(self.trader, 'verify_transaction')
+                ):
+                    result = self.trader.verify_transaction(timeout=15)
+                    self._sniper_verified = True
+                    if result is True:
+                        self.dashboard.log(f"✅ Sniper TX confirmed: {self._sniper_tx_hash}")
+                    elif result is False:
+                        self.dashboard.log(f"❌ Sniper TX FAILED: {self._sniper_tx_hash}")
+                    else:
+                        self.dashboard.log(f"⏳ Sniper TX pending: {self._sniper_tx_hash}")
             else:
                 self.dashboard.update_status("⏳ Waiting for entry window")
             self._refresh_display()
             return
-
-        self.dashboard.update_status("🔍 Evaluating signal")
-
-        # Get price series from round's start_ts (not clock-aligned window)
-        window_prices_raw = self.binance.get_window_prices(round_data.start_ts)
-        prices = [pp.price for pp in window_prices_raw]
 
         if not prices:
             self.logger.debug("No prices in epoch window yet.")
@@ -609,72 +629,255 @@ class PolymarketBot:
             bet_usdc=self.dashboard._round_bet_usdc,
         )
 
-        # Log evaluation to dashboard
-        p_up_str = f"{p_up_display:.2f}" if p_up_display is not None else "?"
-        self.dashboard.log(
-            f"Epoch #{current_epoch} | Lock in {seconds_to_lock:.0f}s | "
-            f"P(Up)={p_up_str} | Pool: {round_data.total_bnb:.1f} BNB "
-            f"(bull {round_data.bull_ratio:.0%} / bear {round_data.bear_ratio:.0%})"
-            + (" [MOCK]" if round_data.is_mock else "")
-        )
+        # ── Phase 1: Pre-load (T-sniper_window_seconds > seconds_to_lock > sniper_window) ──
+        # Pre-fetch all slow data when we're in the outer part of the entry window
+        # (between entry_window_seconds and sniper_window_seconds before lock)
+        if (
+            not self._prefetch_done
+            and not self._traded_this_epoch
+            and seconds_to_lock > self._sniper_window_seconds
+        ):
+            self.dashboard.update_status("📡 Pre-loading strategy data...")
+            self.dashboard.log(
+                f"Epoch #{current_epoch} | Lock in {seconds_to_lock:.0f}s | "
+                f"Phase 1: pre-loading data..."
+            )
+            self._refresh_display()
 
-        signal = self.strategy.evaluate(
-            prices=prices,
-            yes_price=yes_price_equiv,
-            window=window,
-            is_mock_data=round_data.is_mock,
-            pool_total_bnb=round_data.total_bnb,
-            pool_bull_bnb=round_data.bull_bnb,
-            pool_bear_bnb=round_data.bear_bnb,
-        )
+            # Run prefetch in executor so it doesn't block the event loop
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.strategy.prefetch(prices, epoch=current_epoch)
+                )
+            except Exception as e:
+                self.logger.warning(f"Prefetch failed (non-fatal): {e}")
 
-        if signal:
-            if not self._traded_this_epoch:
-                # Safety guard: don't bet if too close to lock (tx would fail)
-                if seconds_to_lock < self._min_seconds_before_lock:
-                    msg = f"⏱ Too close to lock ({seconds_to_lock:.1f}s < {self._min_seconds_before_lock}s min) — skipping"
+            # For live mode: pre-build and pre-sign both transactions
+            if self.mode == "live" and hasattr(self.trader, 'prepare_transactions'):
+                bnb_price = self.binance.last_price or 600.0
+                bet_usdc = self.config.get("strategy", {}).get("max_position_usdc", 15.0)
+                bet_bnb = bet_usdc / bnb_price
+                try:
+                    ok = await loop.run_in_executor(
+                        None,
+                        lambda: self.trader.prepare_transactions(current_epoch, bet_bnb)
+                    )
+                    if ok:
+                        self.logger.info(
+                            f"✅ Both TXs pre-signed for epoch {current_epoch} | "
+                            f"bet={bet_bnb:.6f} BNB"
+                        )
+                except Exception as e:
+                    self.logger.warning(f"TX pre-signing failed (non-fatal): {e}")
+
+            self._prefetch_done = True
+            self.dashboard.update_status("📡 Data pre-loaded — awaiting sniper window")
+            self._refresh_display()
+            return
+
+        # ── Phase 2: Sniper shot (seconds_to_lock <= sniper_window_seconds) ────
+        # ONE single poll + evaluate + fire as close to lock as possible
+        if (
+            not self._sniped_this_epoch
+            and not self._traded_this_epoch
+            and seconds_to_lock <= self._sniper_window_seconds
+            and seconds_to_lock >= self._min_seconds_before_lock
+        ):
+            self.dashboard.update_status("🎯 SNIPER — taking final snapshot...")
+            self._refresh_display()
+
+            # Fresh on-chain poll for latest pool snapshot
+            fresh_round = await loop.run_in_executor(None, self.pancake.get_current_round)
+            if fresh_round is not None:
+                round_data = fresh_round
+                self._last_round_data = round_data
+                self._last_poll_ts = now
+
+            # Re-fetch latest prices for sniper window
+            window_prices_raw = self.binance.get_window_prices(round_data.start_ts)
+            prices = [pp.price for pp in window_prices_raw]
+
+            if not prices:
+                self.logger.warning("Sniper: no prices available — aborting sniper shot")
+                self.dashboard.update_status("⚠️ Sniper: no prices")
+                self._refresh_display()
+                return
+
+            # Recalculate seconds_to_lock with fresh data
+            seconds_to_lock_fresh = round_data.lock_ts - time.time()
+
+            # Rebuild window with fresh round data
+            window = window_from_round(round_data, entry_window_seconds=self.strategy.entry_window_seconds)
+
+            # Log evaluation to dashboard
+            p_up_str = f"{p_up_display:.2f}" if p_up_display is not None else "?"
+            self.dashboard.log(
+                f"🎯 SNIPER Epoch #{current_epoch} | Lock in {seconds_to_lock_fresh:.1f}s | "
+                f"P(Up)={p_up_str} | Pool: {round_data.total_bnb:.1f} BNB "
+                f"(bull {round_data.bull_ratio:.0%} / bear {round_data.bear_ratio:.0%})"
+                + (" [MOCK]" if round_data.is_mock else "")
+            )
+
+            signal = self.strategy.evaluate(
+                prices=prices,
+                yes_price=round_data.yes_price_equiv,
+                window=window,
+                is_mock_data=round_data.is_mock,
+                pool_total_bnb=round_data.total_bnb,
+                pool_bull_bnb=round_data.bull_bnb,
+                pool_bear_bnb=round_data.bear_bnb,
+            )
+
+            self._sniped_this_epoch = True  # Only attempt once per epoch
+
+            if signal:
+                # Safety guard: don't bet if too close to lock
+                if seconds_to_lock_fresh < self._min_seconds_before_lock:
+                    msg = f"⏱ Sniper too late ({seconds_to_lock_fresh:.1f}s < {self._min_seconds_before_lock}s min) — skipping"
                     self.logger.warning(msg)
                     self.dashboard.log(msg)
                     self.dashboard.update_status("⏱ Too late to bet")
                     self._refresh_display()
                     return
 
-                # Log signal to dashboard
                 self.dashboard.log(
                     f"🎯 Signal: {signal.side} @ edge={signal.edge:.2f} | P(Up)={signal.p_up:.2f} | ${signal.position_size_usdc:.2f}"
                 )
-                self.dashboard.update_status(f"🎯 Entering {signal.side} trade...")
-                self._refresh_display()
 
-                # Enter trade (one trade per epoch max)
-                trade_result = self.trader.enter_trade(signal, window)
-                self._traded_this_epoch = True
+                if self.mode == "live" and hasattr(self.trader, 'fire_transaction'):
+                    # Fire the pre-signed transaction immediately (fire-and-forget)
+                    self.dashboard.update_status(f"🚀 Firing {signal.side} TX...")
+                    self._refresh_display()
 
-                # Update round card with bet info
-                self.dashboard.update_round_info(
-                    epoch=current_epoch,
-                    lock_price=getattr(round_data, 'lock_price', None),
-                    pool_total_bnb=getattr(round_data, 'total_bnb', None),
-                    p_up=p_up_display,
-                    edge=signal.edge,
-                    signal_side=signal.side,
-                    bet_bnb=getattr(trade_result, 'bet_bnb', None) if trade_result else signal.position_size_usdc / (self.binance.last_price or 600),
-                    bet_usdc=signal.position_size_usdc,
-                )
+                    tx_hash = await loop.run_in_executor(
+                        None,
+                        lambda: self.trader.fire_transaction(signal.side)
+                    )
 
-                self.dashboard.update_status(f"✅ Trade entered: {signal.side}")
-                self.dashboard.log(
-                    f"✅ Trade entered: bet{signal.side.capitalize()} epoch #{current_epoch}"
-                )
+                    if tx_hash:
+                        self._sniper_tx_hash = tx_hash
+                        self._sniper_verified = False
+                        self._traded_this_epoch = True
+
+                        # Record the trade (without waiting for receipt)
+                        bnb_price = self.binance.last_price or 600.0
+                        bet_bnb = signal.position_size_usdc / bnb_price
+                        from live_trader import LiveTrade
+                        import time as _time
+                        self._trade_counter = getattr(self, '_trade_counter', 0) + 1
+                        trade_id = f"LT-{int(_time.time())}-{self._trade_counter:04d}"
+                        entry_price = signal.yes_price if signal.side == "YES" else (1.0 - signal.yes_price)
+                        trade = LiveTrade(
+                            trade_id=trade_id,
+                            timestamp_entry=_time.time(),
+                            timestamp_exit=None,
+                            side=signal.side,
+                            entry_price=entry_price,
+                            position_size_usdc=signal.position_size_usdc,
+                            bet_bnb=bet_bnb,
+                            bnb_price_at_entry=bnb_price,
+                            p_up_at_entry=signal.p_up,
+                            yes_price_at_entry=signal.yes_price,
+                            edge_at_entry=signal.edge,
+                            kelly_fraction=signal.kelly_fraction,
+                            window_start_ts=window.window_start_ts,
+                            window_end_ts=window.window_end_ts,
+                            window_index=window.window_index,
+                            epoch=current_epoch,
+                            is_mock=signal.is_mock,
+                            bull_pct=signal.bull_pct,
+                            bear_pct=signal.bear_pct,
+                            tx_hash=tx_hash,
+                            tx_status="pending",
+                            outcome="PENDING",
+                        )
+                        self.trader._trades.append(trade)
+                        self.trader._pending_trades.append(trade)
+                        self.trader.metrics.total_trades += 1
+                        self.trader.metrics.pending += 1
+                        self.trader.metrics.total_wagered += trade.position_size_usdc
+                        self.trader._save_trades()
+
+                        self.dashboard.update_round_info(
+                            epoch=current_epoch,
+                            lock_price=getattr(round_data, 'lock_price', None),
+                            pool_total_bnb=getattr(round_data, 'total_bnb', None),
+                            p_up=p_up_display,
+                            edge=signal.edge,
+                            signal_side=signal.side,
+                            bet_bnb=bet_bnb,
+                            bet_usdc=signal.position_size_usdc,
+                        )
+                        self.dashboard.update_status(f"🚀 TX fired: {signal.side} | hash={tx_hash[:12]}...")
+                        self.dashboard.log(f"🚀 Sniper TX fired: bet{signal.side.capitalize()} epoch #{current_epoch} | tx={tx_hash[:16]}...")
+                    else:
+                        # fire_transaction failed — fall back to normal enter_trade
+                        self.logger.warning("fire_transaction failed — falling back to enter_trade()")
+                        self.dashboard.update_status(f"⚠️ Fire failed — using enter_trade...")
+                        self._refresh_display()
+                        trade_result = self.trader.enter_trade(signal, window)
+                        self._traded_this_epoch = True
+                        bet_bnb_display = getattr(trade_result, 'bet_bnb', None) if trade_result else signal.position_size_usdc / (self.binance.last_price or 600)
+                        self.dashboard.update_round_info(
+                            epoch=current_epoch,
+                            lock_price=getattr(round_data, 'lock_price', None),
+                            pool_total_bnb=getattr(round_data, 'total_bnb', None),
+                            p_up=p_up_display,
+                            edge=signal.edge,
+                            signal_side=signal.side,
+                            bet_bnb=bet_bnb_display,
+                            bet_usdc=signal.position_size_usdc,
+                        )
+                        self.dashboard.update_status(f"✅ Trade entered: {signal.side}")
+                        self.dashboard.log(f"✅ Trade entered: bet{signal.side.capitalize()} epoch #{current_epoch}")
+                else:
+                    # Paper trading: use normal enter_trade with fresh snapshot
+                    self.dashboard.update_status(f"🎯 Entering {signal.side} trade (paper)...")
+                    self._refresh_display()
+                    trade_result = self.trader.enter_trade(signal, window)
+                    self._traded_this_epoch = True
+
+                    bet_bnb_display = getattr(trade_result, 'bet_bnb', None) if trade_result else signal.position_size_usdc / (self.binance.last_price or 600)
+                    self.dashboard.update_round_info(
+                        epoch=current_epoch,
+                        lock_price=getattr(round_data, 'lock_price', None),
+                        pool_total_bnb=getattr(round_data, 'total_bnb', None),
+                        p_up=p_up_display,
+                        edge=signal.edge,
+                        signal_side=signal.side,
+                        bet_bnb=bet_bnb_display,
+                        bet_usdc=signal.position_size_usdc,
+                    )
+                    self.dashboard.update_status(f"✅ Trade entered: {signal.side}")
+                    self.dashboard.log(f"✅ Trade entered: bet{signal.side.capitalize()} epoch #{current_epoch}")
+            else:
+                skip_reason = getattr(self.strategy, "last_skip_reason", None)
+                msg = skip_reason or "🔍 No signal at sniper time"
+                self.dashboard.log(f"Sniper: {msg}")
+                self.dashboard.update_status(msg)
+
+            self._refresh_display()
+            return
+
+        # ── In entry window but not yet in sniper zone: show status ─────────
+        if self._traded_this_epoch or self._sniped_this_epoch:
+            if self._sniped_this_epoch and not self._traded_this_epoch:
+                self.dashboard.update_status("⏸ Sniper fired — no signal")
             else:
                 self.dashboard.update_status("⏸ Already traded this epoch")
+        elif seconds_to_lock > self._sniper_window_seconds:
+            phase_str = "📡 Pre-loaded" if self._prefetch_done else "🔍 Evaluating signal"
+            p_up_str = f"{p_up_display:.2f}" if p_up_display is not None else "?"
+            self.dashboard.log(
+                f"Epoch #{current_epoch} | Lock in {seconds_to_lock:.0f}s | "
+                f"P(Up)={p_up_str} | Pool: {round_data.total_bnb:.1f} BNB "
+                f"(bull {round_data.bull_ratio:.0%} / bear {round_data.bear_ratio:.0%})"
+                + (" [MOCK]" if round_data.is_mock else "")
+            )
+            self.dashboard.update_status(f"{phase_str} | Sniper in {seconds_to_lock - self._sniper_window_seconds:.0f}s")
         else:
-            skip_reason = getattr(self.strategy, "last_skip_reason", None)
-            if skip_reason:
-                self.dashboard.log(skip_reason)
-                self.dashboard.update_status(skip_reason)
-            else:
-                self.dashboard.update_status("🔍 Evaluating signal")
+            self.dashboard.update_status("🎯 Awaiting sniper window...")
 
         self._refresh_display()
 
@@ -780,6 +983,9 @@ class PolymarketBot:
         self._last_epoch = new_epoch
         self._traded_this_epoch = False
         self._in_entry_window = False
+        self._prefetch_done = False
+        self._sniped_this_epoch = False
+        self._sniper_tx_hash = None
 
         # Reset NEXT round card for the new epoch
         self.dashboard.update_round_info(
