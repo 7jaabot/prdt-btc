@@ -113,6 +113,38 @@ class LLMPriceActionStrategy(BaseStrategy):
         return None
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch klines and call the LLM ahead of the sniper window."""
+        super().prefetch(prices, epoch)
+        if not self.groq_api_key:
+            logger.warning("[LLM] prefetch: no GROQ_API_KEY — skipping")
+            return
+
+        current_price = prices[-1] if prices else 0.0
+        if current_price <= 0:
+            return
+
+        logger.debug("[LLM] prefetch: fetching klines + calling LLM...")
+        klines = self._fetch_all_klines()
+        if klines is None:
+            logger.warning("[LLM] prefetch: failed to fetch klines")
+            return
+
+        prompt = self._format_klines_prompt(klines, current_price)
+        result = self._call_llm(prompt)
+        if result is not None:
+            self._prefetch_cache["llm_result"] = result
+            logger.info(
+                f"[LLM] prefetch: {result['direction']} conf={result['confidence']:.2f} "
+                f"({result['latency']:.1f}s) — {result.get('reasoning', '')}"
+            )
+        else:
+            logger.warning("[LLM] prefetch: LLM call failed")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Data fetching
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -267,19 +299,20 @@ class LLMPriceActionStrategy(BaseStrategy):
             self.last_skip_reason = "⏸ [LLM] No price data available"
             return None
 
-        # Fetch klines
-        klines = self._fetch_all_klines()
-        if klines is None:
-            self.last_skip_reason = "⏸ [LLM] Failed to fetch klines"
-            return None
-
-        # Format prompt and call LLM
-        prompt = self._format_klines_prompt(klines, current_price)
-        result = self._call_llm(prompt)
-
-        if result is None:
-            self.last_skip_reason = "⏸ [LLM] API call failed"
-            return None
+        # Use prefetched LLM result if available, otherwise fetch + call LLM
+        if "llm_result" in self._prefetch_cache:
+            result = self._prefetch_cache["llm_result"]
+            logger.debug(f"[LLM] using prefetched result: {result['direction']} conf={result['confidence']:.2f}")
+        else:
+            klines = self._fetch_all_klines()
+            if klines is None:
+                self.last_skip_reason = "⏸ [LLM] Failed to fetch klines"
+                return None
+            prompt = self._format_klines_prompt(klines, current_price)
+            result = self._call_llm(prompt)
+            if result is None:
+                self.last_skip_reason = "⏸ [LLM] API call failed"
+                return None
 
         direction = result["direction"]
         confidence = result["confidence"]

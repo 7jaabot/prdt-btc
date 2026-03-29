@@ -106,6 +106,25 @@ class CorrelationArbitrageStrategy(BaseStrategy):
         self._kline_cache: dict[str, tuple[float, list[float]]] = {}
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch BTC and ETH klines for correlation analysis."""
+        super().prefetch(prices, epoch)
+        logger.debug("[CorrArb] prefetch: fetching BTC/ETH klines...")
+        btc_return = self._get_5min_return("BTCUSDT")
+        eth_return = self._get_5min_return("ETHUSDT")
+        if btc_return is not None and eth_return is not None:
+            self._prefetch_cache["btc_return"] = btc_return
+            self._prefetch_cache["eth_return"] = eth_return
+            logger.info(
+                f"[CorrArb] prefetch: BTC={btc_return:+.4f} ETH={eth_return:+.4f}"
+            )
+        else:
+            logger.warning("[CorrArb] prefetch: failed to fetch BTC/ETH returns")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Public interface
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -136,9 +155,14 @@ class CorrelationArbitrageStrategy(BaseStrategy):
             self.last_skip_reason = f"⏸ Not enough BNB price data ({len(prices)} pts)"
             return None
 
-        # ── 1. Fetch BTC and ETH 5-min returns ───────────────────────────────
-        btc_return = self._get_5min_return("BTCUSDT")
-        eth_return = self._get_5min_return("ETHUSDT")
+        # ── 1. Fetch BTC and ETH 5-min returns (use prefetch cache if available)
+        if "btc_return" in self._prefetch_cache and "eth_return" in self._prefetch_cache:
+            btc_return = self._prefetch_cache["btc_return"]
+            eth_return = self._prefetch_cache["eth_return"]
+            logger.debug(f"[CorrArb] using prefetched: BTC={btc_return:+.4f} ETH={eth_return:+.4f}")
+        else:
+            btc_return = self._get_5min_return("BTCUSDT")
+            eth_return = self._get_5min_return("ETHUSDT")
 
         if btc_return is None or eth_return is None:
             self.last_skip_reason = "⏸ Could not fetch BTC/ETH klines"

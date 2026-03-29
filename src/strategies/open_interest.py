@@ -129,6 +129,19 @@ class OpenInterestStrategy(BaseStrategy):
     def name(self) -> str:
         return "📊 Open Interest Momentum"
 
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch OI history and cache it for the sniper window."""
+        super().prefetch(prices, epoch)
+        logger.debug("OI: prefetching open interest history...")
+        oi_history = _fetch_oi_history(self.oi_period)
+        if len(oi_history) >= 2:
+            oi_delta = _compute_oi_delta(oi_history)
+            self._prefetch_cache["oi_history"] = oi_history
+            self._prefetch_cache["oi_delta"] = oi_delta
+            logger.info(f"OI prefetch: {len(oi_history)} bars | delta={oi_delta:+.4%}" if oi_delta is not None else f"OI prefetch: {len(oi_history)} bars | delta=None")
+        else:
+            logger.warning("OI prefetch: insufficient OI history fetched")
+
     def evaluate(
         self,
         prices: list[float],
@@ -153,15 +166,21 @@ class OpenInterestStrategy(BaseStrategy):
             )
             return None
 
-        # ── Fetch OI history ─────────────────────────────────────────────────
-        oi_history = _fetch_oi_history(self.oi_period)
+        # ── Fetch OI history (use prefetch cache if available) ───────────────
+        if "oi_history" in self._prefetch_cache:
+            oi_history = self._prefetch_cache["oi_history"]
+            oi_delta = self._prefetch_cache.get("oi_delta")
+            logger.debug(f"OI: using prefetched data | delta={oi_delta:+.4%}" if oi_delta is not None else "OI: using prefetched data")
+        else:
+            oi_history = _fetch_oi_history(self.oi_period)
+            if len(oi_history) < 2:
+                self.last_skip_reason = "⏸ OI data unavailable (fetch failed or insufficient points)"
+                return None
+            oi_delta = _compute_oi_delta(oi_history)
 
         if len(oi_history) < 2:
             self.last_skip_reason = "⏸ OI data unavailable (fetch failed or insufficient points)"
             return None
-
-        # ── Compute OI delta ─────────────────────────────────────────────────
-        oi_delta = _compute_oi_delta(oi_history)
 
         if oi_delta is None:
             self.last_skip_reason = "⏸ OI delta computation failed"

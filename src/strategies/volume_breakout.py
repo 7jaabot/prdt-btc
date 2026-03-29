@@ -60,6 +60,21 @@ class VolumeBreakoutStrategy(BaseStrategy):
         return "📈 Volume Profile Breakout"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch Binance klines for volume profile analysis."""
+        super().prefetch(prices, epoch)
+        logger.debug("[VolumeBreakout] prefetch: fetching klines...")
+        klines = self._fetch_klines()
+        if len(klines) >= 5:
+            self._prefetch_cache["klines"] = klines
+            logger.info(f"[VolumeBreakout] prefetch: {len(klines)} klines cached")
+        else:
+            logger.warning(f"[VolumeBreakout] prefetch: insufficient klines ({len(klines)})")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Data fetching
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -238,8 +253,12 @@ class VolumeBreakoutStrategy(BaseStrategy):
 
         current_price = prices[-1]
 
-        # ── Fetch klines ──────────────────────────────────────────────────────
-        klines = self._fetch_klines()
+        # ── Fetch klines (use prefetch cache if available) ────────────────────
+        if "klines" in self._prefetch_cache:
+            klines = self._prefetch_cache["klines"]
+            logger.debug(f"[VolumeBreakout] using prefetched klines ({len(klines)})")
+        else:
+            klines = self._fetch_klines()
         if len(klines) < 5:
             self.last_skip_reason = (
                 f"⏸ Insufficient klines ({len(klines)} / {self.n_klines})"

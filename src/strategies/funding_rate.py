@@ -91,6 +91,21 @@ class FundingRateStrategy(BaseStrategy):
         return "💰 Funding Rate Contrarian"
 
     # ─────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch funding rate and cache it for the sniper window."""
+        super().prefetch(prices, epoch)
+        logger.debug("FundingRate: prefetching premium index...")
+        rate = self._fetch_funding_rate()
+        if rate is not None:
+            self._prefetch_cache["funding_rate"] = rate
+            logger.info(f"FundingRate prefetch: premium={rate:.8f}")
+        else:
+            logger.warning("FundingRate prefetch: failed to fetch premium index")
+
+    # ─────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ─────────────────────────────────────────────────────────────────────
 
@@ -213,8 +228,12 @@ class FundingRateStrategy(BaseStrategy):
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             return None
 
-        # Fetch real-time mark-index premium
-        funding_rate = self._fetch_funding_rate()
+        # Fetch mark-index premium (use prefetch cache if available)
+        if "funding_rate" in self._prefetch_cache:
+            funding_rate = self._prefetch_cache["funding_rate"]
+            logger.debug(f"FundingRate: using prefetched premium={funding_rate:.8f}")
+        else:
+            funding_rate = self._fetch_funding_rate()
 
         if funding_rate is None:
             self.last_skip_reason = "⏸ Funding premium unavailable (API error)"

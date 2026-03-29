@@ -7,6 +7,7 @@ Each sub-strategy can have its own edge range filter.
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 from .base import BaseStrategy
@@ -100,6 +101,32 @@ class CombinedStrategy(BaseStrategy):
         self.bankroll = new_bankroll
         for _, strat in self.strategies:
             strat.update_bankroll(new_bankroll)
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """
+        Pre-fetch data for all sub-strategies in parallel.
+
+        Each sub-strategy's prefetch() is called concurrently via a thread pool.
+        This minimises wall-clock time for the pre-load phase.
+        """
+        super().prefetch(prices, epoch)
+
+        def _do_prefetch(name_strat):
+            name, strat = name_strat
+            try:
+                strat.prefetch(prices, epoch)
+            except Exception as e:
+                logger.warning(f"Combined prefetch: {name} failed — {e}")
+
+        with ThreadPoolExecutor(max_workers=len(self.strategies), thread_name_prefix="prefetch") as pool:
+            futures = {pool.submit(_do_prefetch, (name, strat)): name for name, strat in self.strategies}
+            for future in as_completed(futures):
+                name = futures[future]
+                exc = future.exception()
+                if exc:
+                    logger.warning(f"Combined prefetch thread error for {name}: {exc}")
+
+        logger.info(f"Combined prefetch complete for {len(self.strategies)} strategies")
 
     def evaluate(
         self,

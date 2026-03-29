@@ -145,6 +145,22 @@ class WhaleSignalStrategy(BaseStrategy):
         return "🐋 Whale On-Chain Signal"
 
     # ──────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch whale on-chain flow for the sniper window."""
+        super().prefetch(prices, epoch)
+        logger.debug("Whale: prefetching on-chain flow...")
+        net_flow = self._compute_net_flow()
+        if net_flow is not None:
+            self._prefetch_cache["net_flow"] = net_flow
+            logger.info(f"Whale prefetch: net_flow={net_flow:+.0f} BNB")
+        else:
+            logger.warning("Whale prefetch: RPC unavailable — will use price fallback")
+            self._prefetch_cache["net_flow_failed"] = True
+
+    # ──────────────────────────────────────────────────────────────────────────
     # On-chain flow computation
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -273,8 +289,14 @@ class WhaleSignalStrategy(BaseStrategy):
             self.last_skip_reason = f"⏸ Not enough price data ({len(prices)} pts)"
             return None
 
-        # ── Récupération du signal on-chain ───────────────────────────────────
-        net_flow = self._compute_net_flow()
+        # ── Récupération du signal on-chain (use prefetch cache if available) ──
+        if "net_flow" in self._prefetch_cache:
+            net_flow = self._prefetch_cache["net_flow"]
+            logger.debug(f"Whale: using prefetched net_flow={net_flow:+.0f} BNB")
+        elif self._prefetch_cache.get("net_flow_failed"):
+            net_flow = None  # known failure, skip RPC call
+        else:
+            net_flow = self._compute_net_flow()
         using_fallback = False
 
         if net_flow is None:

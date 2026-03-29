@@ -98,6 +98,17 @@ class RSIReversalStrategy(BaseStrategy):
     def name(self) -> str:
         return "🔄 RSI Extreme Reversal"
 
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch Binance klines for RSI computation."""
+        super().prefetch(prices, epoch)
+        logger.debug("RSI: prefetch: fetching klines...")
+        klines = self._fetch_klines()
+        if klines is not None:
+            self._prefetch_cache["klines"] = klines
+            logger.info(f"RSI prefetch: {len(klines)} klines cached")
+        else:
+            logger.warning("RSI prefetch: failed to fetch klines")
+
     def evaluate(
         self,
         prices: list[float],
@@ -114,8 +125,12 @@ class RSIReversalStrategy(BaseStrategy):
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             return None
 
-        # ── Fetch and cache 1m klines ─────────────────────────────────────────
-        klines = self._get_klines()
+        # ── Fetch 1m klines (use prefetch cache if available) ────────────────
+        if "klines" in self._prefetch_cache:
+            klines = self._prefetch_cache["klines"]
+            logger.debug(f"RSI: using prefetched klines ({len(klines)})")
+        else:
+            klines = self._get_klines()
         if klines is None:
             self.last_skip_reason = "⏸ RSI: failed to fetch klines from Binance"
             logger.warning("RSI strategy: could not fetch klines — skipping")

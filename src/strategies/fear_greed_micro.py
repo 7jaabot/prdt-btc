@@ -84,6 +84,26 @@ class FearGreedMicroStrategy(BaseStrategy):
         self._last_volume_spike: bool = False
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch Binance book ticker and 24h stats for MFI computation."""
+        super().prefetch(prices, epoch)
+        logger.debug("[FGM] prefetch: fetching book ticker + 24h stats...")
+        book = self._fetch_book_ticker()
+        stats = self._fetch_24hr_ticker()
+        if book is not None and stats is not None:
+            self._prefetch_cache["book"] = book
+            self._prefetch_cache["stats"] = stats
+            mfi, _, _, volume_spike = self._compute_mfi(book, stats)
+            logger.info(
+                f"[FGM] prefetch: MFI={mfi:.6f} vol_spike={volume_spike}"
+            )
+        else:
+            logger.warning("[FGM] prefetch: Binance API unavailable")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Data fetching
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -205,9 +225,14 @@ class FearGreedMicroStrategy(BaseStrategy):
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             return None
 
-        # Fetch données de marché Binance
-        book = self._fetch_book_ticker()
-        stats = self._fetch_24hr_ticker()
+        # Fetch données de marché Binance (use prefetch cache if available)
+        if "book" in self._prefetch_cache and "stats" in self._prefetch_cache:
+            book = self._prefetch_cache["book"]
+            stats = self._prefetch_cache["stats"]
+            logger.debug("[FGM] using prefetched book/stats data")
+        else:
+            book = self._fetch_book_ticker()
+            stats = self._fetch_24hr_ticker()
 
         if book is None or stats is None:
             self.last_skip_reason = "⏸ [FGM] Binance API unavailable — skip"

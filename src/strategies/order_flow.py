@@ -74,6 +74,27 @@ class OrderFlowStrategy(BaseStrategy):
         return "🏦 Order Flow Imbalance"
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Prefetch (sniper pre-load phase)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def prefetch(self, prices: list[float], epoch=None) -> None:
+        """Pre-fetch aggTrades and cache OFI result for the sniper window."""
+        super().prefetch(prices, epoch)
+        logger.debug("OFI: prefetching aggTrades...")
+        trades = self._fetch_agg_trades()
+        if trades:
+            ofi, total_volume, buy_ratio = self._compute_ofi(trades)
+            self._prefetch_cache["ofi"] = ofi
+            self._prefetch_cache["total_volume"] = total_volume
+            self._prefetch_cache["buy_ratio"] = buy_ratio
+            logger.info(
+                f"OFI prefetch: {len(trades)} trades | OFI={ofi:+.4f} | "
+                f"buy_ratio={buy_ratio:.3f} | total_notional={total_volume:.1f} USDT"
+            )
+        else:
+            logger.warning("OFI prefetch: no trades fetched")
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -162,15 +183,19 @@ class OrderFlowStrategy(BaseStrategy):
         if not window.is_entry_window and window.seconds_remaining > self.entry_window_seconds:
             return None
 
-        # ── Fetch order flow data ───────────────────────────────────────────
-        trades = self._fetch_agg_trades()
-
-        if not trades:
-            self.last_skip_reason = "⏸ OFI: no aggTrades data available"
-            logger.warning("OFI: skipping — no trades fetched")
-            return None
-
-        ofi, total_volume, buy_ratio = self._compute_ofi(trades)
+        # ── Fetch order flow data (use prefetch cache if available) ────────────
+        if "ofi" in self._prefetch_cache:
+            ofi = self._prefetch_cache["ofi"]
+            total_volume = self._prefetch_cache.get("total_volume", 0.0)
+            buy_ratio = self._prefetch_cache.get("buy_ratio", 0.5)
+            logger.debug(f"OFI: using prefetched data | OFI={ofi:+.4f}")
+        else:
+            trades = self._fetch_agg_trades()
+            if not trades:
+                self.last_skip_reason = "⏸ OFI: no aggTrades data available"
+                logger.warning("OFI: skipping — no trades fetched")
+                return None
+            ofi, total_volume, buy_ratio = self._compute_ofi(trades)
 
         # Convert USDT notional volume to approximate BNB for min_volume check
         current_price = prices[-1] if prices else None
