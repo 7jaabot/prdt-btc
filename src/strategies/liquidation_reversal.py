@@ -403,11 +403,10 @@ class LiquidationReversalStrategy(BaseStrategy):
             f"z={zscore:+.2f} (history={len(self._history)} buckets)"
         )
 
-        if abs(zscore) < 1.0:
-            self.last_skip_reason = (
-                f"⏸ Liq z-score too low ({zscore:+.2f} < ±1.0) — no edge"
-            )
-            return None
+        # NOTE: zscore < 1.0 pre-filter removed — zscore is used in _estimate_p_up
+        # to compute p_up, which feeds the edge. A low z-score → p_up ≈ 0.50 →
+        # near-zero edge → filtered naturally by edge_threshold.
+        # Safety: zscore == 0 → p_up = 0.50 → edge = 0 → Kelly = 0, handled below.
 
         # ── 4. P(Up) from liquidation signal ─────────────────────────────────
         p_up = self._estimate_p_up(zscore)

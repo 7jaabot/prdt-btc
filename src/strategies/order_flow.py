@@ -214,7 +214,7 @@ class OrderFlowStrategy(BaseStrategy):
             f"(≈{total_bnb:.1f} BNB) | threshold={self.ofi_threshold}"
         )
 
-        # ── Volume guard ────────────────────────────────────────────────────
+        # ── Volume guard (data quality — volume not in edge formula, KEPT) ────
         if total_bnb < self.ofi_min_volume:
             self.last_skip_reason = (
                 f"⏸ OFI: volume too low "
@@ -223,14 +223,10 @@ class OrderFlowStrategy(BaseStrategy):
             logger.info(f"OFI: skipping — insufficient volume ({total_bnb:.1f} BNB)")
             return None
 
-        # ── Signal threshold ────────────────────────────────────────────────
+        # NOTE: OFI threshold check removed — OFI is used to compute p_up/edge,
+        # so the edge_threshold check below is the legitimate gate. A weak OFI
+        # will naturally produce a low edge that fails the edge_threshold.
         abs_ofi = abs(ofi)
-        if abs_ofi <= self.ofi_threshold:
-            self.last_skip_reason = (
-                f"⏸ OFI too weak ({ofi:+.4f} | "
-                f"|OFI|={abs_ofi:.4f} ≤ {self.ofi_threshold})"
-            )
-            return None
 
         # ── Direction and p_up ──────────────────────────────────────────────
         # Map OFI ∈ [-1, 1] to P(Up) ∈ [0.35, 0.65].
@@ -244,8 +240,8 @@ class OrderFlowStrategy(BaseStrategy):
         effective_yes_price = self.FAIR_ODDS_PRICE
         edge, side = compute_edge(p_up, effective_yes_price)
 
-        # Override edge with OFI-derived edge for cleaner signal
-        ofi_edge = abs_ofi - self.ofi_threshold  # raw OFI edge above threshold
+        # Raw OFI magnitude (used for logging only — edge comes from compute_edge)
+        ofi_edge = abs_ofi
 
         logger.info(
             f"OFI signal: side={side} | p_up={p_up:.4f} | "

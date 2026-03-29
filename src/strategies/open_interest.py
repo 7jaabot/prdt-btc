@@ -186,16 +186,14 @@ class OpenInterestStrategy(BaseStrategy):
             self.last_skip_reason = "⏸ OI delta computation failed"
             return None
 
+        # NOTE: oi_delta_threshold pre-filter removed — oi_delta_threshold is used
+        # in the edge formula (oi_scale = oi_abs / threshold*3). A weak OI delta →
+        # low oi_scale → low p_up displacement → low edge → filtered by edge_threshold.
         oi_abs = abs(oi_delta)
 
-        if oi_abs < self.oi_delta_threshold:
-            self.last_skip_reason = (
-                f"⏸ OI delta too weak ({oi_delta:+.4%} < ±{self.oi_delta_threshold:.4%})"
-            )
-            logger.info(
-                f"OI delta {oi_delta:+.4%} below threshold "
-                f"{self.oi_delta_threshold:.4%} — skipping"
-            )
+        # Safety: oi_delta == 0 → no OI signal, skip
+        if oi_abs == 0:
+            self.last_skip_reason = "⏸ OI delta is zero — no signal"
             return None
 
         # ── Price momentum ───────────────────────────────────────────────────

@@ -317,25 +317,23 @@ class VolumeBreakoutStrategy(BaseStrategy):
             f"edge_raw={edge_raw:.4f} | volatility={volatility:.6f}"
         )
 
-        # Direction: price must be outside the POC buffer zone
-        if current_price > poc + buffer:
-            # Bullish breakout: price above high-volume node → momentum UP
+        # NOTE: POC buffer pre-filter removed — distance_to_poc (which includes the
+        # buffer zone) is used directly in edge_raw. A price inside the buffer →
+        # small abs_distance → low edge_raw → low edge → filtered by edge_threshold.
+        # Safety: price == poc → zero distance → edge_raw = 0 → no signal.
+        if distance_to_poc == 0:
+            self.last_skip_reason = "⏸ Price exactly at POC — no directional signal"
+            return None
+
+        # Direction: sign of distance from POC
+        if current_price > poc:
+            # Price above POC → momentum UP
             p_up = min(0.65, 0.5 + edge_raw * 0.3)
             direction = "UP"
-        elif current_price < poc - buffer:
-            # Bearish breakout: price below high-volume node → momentum DOWN
+        else:
+            # Price below POC → momentum DOWN
             p_up = max(0.35, 0.5 - edge_raw * 0.3)
             direction = "DOWN"
-        else:
-            self.last_skip_reason = (
-                f"⏸ Price within POC buffer "
-                f"(POC={poc:.4f} ±{buffer:.4f}, current={current_price:.4f})"
-            )
-            logger.debug(
-                f"[VolumeBreakout] Price {current_price:.4f} inside POC buffer "
-                f"[{poc - buffer:.4f}, {poc + buffer:.4f}]"
-            )
-            return None
 
         # ── Edge vs threshold ─────────────────────────────────────────────────
         # Use fair odds (0.5) — same as GBMStrategy fair_odds mode

@@ -277,16 +277,13 @@ class MarketRegimeStrategy(BaseStrategy):
             return None
 
         # ── 3. Regime classification ───────────────────────────────────────
-        if self.hurst_ranging <= H <= self.hurst_trending:
-            self.last_skip_reason = (
-                f"⏸ Ambiguous regime (H={H:.3f} ∈ [{self.hurst_ranging:.2f}, "
-                f"{self.hurst_trending:.2f}]) — skip"
-            )
-            logger.info(self.last_skip_reason)
-            return None
-
+        # NOTE: ambiguous zone pre-filter removed — Hurst exponent is used directly
+        # in edge formula (hurst_edge_raw = abs(H - 0.5) * 2). H near 0.5 →
+        # low edge → filtered naturally by edge_threshold.
         is_trending = H > self.hurst_trending   # True  → trend-following
-        is_ranging  = H < self.hurst_ranging    # False → mean-reversion
+        is_ranging  = H < self.hurst_ranging    # True  → mean-reversion
+        # When H is between ranging and trending thresholds, we still use the
+        # closest regime interpretation based on which side of 0.5 H falls on.
 
         # ── 4. Momentum direction ─────────────────────────────────────────
         if prices[-1] <= 0 or prices[0] <= 0:

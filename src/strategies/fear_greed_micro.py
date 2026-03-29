@@ -255,31 +255,31 @@ class FearGreedMicroStrategy(BaseStrategy):
             f"fear_thr={self.fear_threshold} greed_thr={self.greed_threshold}"
         )
 
-        # Détermination du signal
-        side: Optional[str] = None
-        p_up: float = 0.5
+        # NOTE: fear/greed threshold pre-filters removed — MFI deviation from baseline
+        # is used directly in edge. High MFI (above baseline) → Fear → bet UP;
+        # Low MFI (below baseline) → Greed → bet DOWN. Direction is determined by
+        # MFI vs baseline, not by threshold crossing.
+        # Safety: mfi == mfi_baseline → edge = 0, no trade.
+        if mfi == self.mfi_baseline:
+            self.last_skip_reason = "⏸ [FGM] MFI exactly at baseline — no edge"
+            return None
 
-        if mfi > self.fear_threshold:
-            # Fear extrême → mean reversion haussière → UP
+        # Détermination du signal (direction based on MFI vs baseline)
+        side: Optional[str]
+        p_up: float
+
+        if mfi > self.mfi_baseline:
+            # High MFI (elevated fear) → mean reversion haussière → UP
             side = "YES"
             p_up = self.fear_p_up
-            logger.info(f"[FGM] 😱 FEAR signal | MFI={mfi:.6f} > {self.fear_threshold} → UP")
-
-        elif mfi < self.greed_threshold and volume_spike:
-            # Greed extrême (spread serré + FOMO volume) → correction → DOWN
+            mood = "FEAR" if mfi > self.fear_threshold else "MILD-FEAR"
+            logger.info(f"[FGM] {mood} signal | MFI={mfi:.6f} > baseline={self.mfi_baseline:.6f} → UP")
+        else:
+            # Low MFI (low fear / greed) → correction → DOWN
             side = "NO"
             p_up = self.greed_p_up
-            logger.info(
-                f"[FGM] 🤑 GREED signal | MFI={mfi:.6f} < {self.greed_threshold} "
-                f"+ vol_spike={volume_spike} → DOWN"
-            )
-
-        if side is None:
-            self.last_skip_reason = (
-                f"⏸ [FGM] Neutral | MFI={mfi:.6f} "
-                f"(fear>{self.fear_threshold} or greed<{self.greed_threshold}+spike needed)"
-            )
-            return None
+            mood = "GREED" if mfi < self.greed_threshold else "MILD-GREED"
+            logger.info(f"[FGM] {mood} signal | MFI={mfi:.6f} < baseline={self.mfi_baseline:.6f} → DOWN")
 
         # Calcul edge normalisé
         edge = self._compute_edge_from_mfi(mfi)

@@ -77,10 +77,12 @@ class PoolContrarianStrategy(BaseStrategy):
             )
             return None
 
-        if payout < self.min_payout:
-            self.last_skip_reason = (
-                f"⏸ Payout too low (×{payout:.1f}, min ×{self.min_payout})"
-            )
+        # NOTE: min_payout check removed — payout directly computes edge below.
+        # A low payout → low edge → naturally filtered by edge_threshold.
+        # Safety guard: payout must be > 0 to avoid division issues (guaranteed
+        # by the bear_bnb/bull_bnb > 0 condition above, but be explicit).
+        if payout <= 0:
+            self.last_skip_reason = "⏸ Invalid payout (division by zero guard)"
             return None
 
         # Edge = payout attractiveness. P(win)=0.50 assumed (no directional prediction)

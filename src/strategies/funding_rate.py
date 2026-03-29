@@ -247,30 +247,26 @@ class FundingRateStrategy(BaseStrategy):
             logger.warning("Skipping: could not fetch funding premium")
             return None
 
+        # NOTE: positive/negative threshold pre-filter removed — funding_rate is used
+        # directly in the edge formula below. A near-zero rate → low edge → filtered
+        # naturally by edge_threshold. Safety: rate == 0 → no direction.
+        if funding_rate == 0.0:
+            self.last_skip_reason = "⏸ Funding rate is exactly zero — no signal"
+            return None
+
         # Determine directional signal (contrarian logic)
-        if funding_rate > self.positive_threshold:
+        if funding_rate > 0:
             # Positive premium = longs overloaded → expect down move → bet DOWN (NO)
             side = "NO"
             logger.info(
-                f"Premium={funding_rate:.8f} > threshold={self.positive_threshold:.8f} "
-                f"→ LONGS overloaded → bet DOWN"
+                f"Premium={funding_rate:.8f} (positive) → LONGS overloaded → bet DOWN"
             )
-
-        elif funding_rate < self.negative_threshold:
+        else:
             # Negative premium = shorts overloaded → expect up move → bet UP (YES)
             side = "YES"
             logger.info(
-                f"Premium={funding_rate:.8f} < threshold={self.negative_threshold:.8f} "
-                f"→ SHORTS overloaded → bet UP"
+                f"Premium={funding_rate:.8f} (negative) → SHORTS overloaded → bet UP"
             )
-
-        else:
-            self.last_skip_reason = (
-                f"⏸ Premium neutral ({funding_rate:.8f}), "
-                f"thresholds=[{self.negative_threshold:.8f}, {self.positive_threshold:.8f}]"
-            )
-            logger.info(f"Skipping: {self.last_skip_reason}")
-            return None
 
         # Compute edge and p_win from signal magnitude
         abs_rate = abs(funding_rate)

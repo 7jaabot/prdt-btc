@@ -71,12 +71,9 @@ class FollowCrowdStrategy(BaseStrategy):
             self.last_skip_reason = f"⏸ Opposite side empty ({opposite_bnb:.4f} BNB)"
             return None
 
-        # Need some minimum conviction from the crowd
-        if majority_pct < self.min_majority_pct:
-            self.last_skip_reason = (
-                f"⏸ Majority too weak ({majority_pct:.0%} < {self.min_majority_pct:.0%})"
-            )
-            return None
+        # NOTE: min_majority_pct check removed — majority_pct is directly used to
+        # compute edge below. A weak majority will produce a low edge that naturally
+        # fails the edge_threshold check. Let the edge be the sole filter.
 
         # Edge: how much the crowd agrees (more agreement = higher edge)
         edge = (majority_pct - 0.50) * 0.5  # scale: 60%→0.05, 70%→0.10, 90%→0.20

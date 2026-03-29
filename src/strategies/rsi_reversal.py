@@ -158,7 +158,11 @@ class RSIReversalStrategy(BaseStrategy):
             f"remaining={window.seconds_remaining:.1f}s"
         )
 
-        # ── Determine signal direction ────────────────────────────────────────
+        # NOTE: RSI threshold pre-filters removed — the RSI thresholds are used
+        # directly in the p_up / norm formulas below. A neutral RSI → norm ≈ 0 →
+        # p_up ≈ 0.50 → near-zero edge → filtered by edge_threshold.
+        # We must still determine direction (oversold → UP, overbought → DOWN).
+        # Use the midpoint (50) as the dividing line when no threshold is breached.
         is_oversold = (
             rsi_fast < self.rsi_oversold_fast
             and rsi_slow < self.rsi_oversold_slow
@@ -168,29 +172,20 @@ class RSIReversalStrategy(BaseStrategy):
             and rsi_slow > self.rsi_overbought_slow
         )
 
-        if not is_oversold and not is_overbought:
-            self.last_skip_reason = (
-                f"⏸ RSI neutral: fast={rsi_fast:.1f} slow={rsi_slow:.1f} "
-                f"(need <{self.rsi_oversold_fast}/{self.rsi_oversold_slow} or "
-                f">{self.rsi_overbought_fast}/{self.rsi_overbought_slow})"
-            )
-            return None
-
         # ── Compute p_up from RSI extremity ───────────────────────────────────
-        if is_oversold:
+        if is_oversold or rsi_fast < 50.0:
             # How far below the oversold threshold is the fast RSI?
-            # Range: 0 (at threshold) → 1 (RSI = 0)
-            norm = (self.rsi_oversold_fast - rsi_fast) / self.rsi_oversold_fast
-            norm = max(0.0, min(1.0, norm))
+            # Positive norm when below threshold, negative when above (→ small/negative p_up deviation)
+            norm = (self.rsi_oversold_fast - rsi_fast) / max(self.rsi_oversold_fast, 1.0)
+            norm = max(-1.0, min(1.0, norm))
             p_up = 0.5 + self._MAX_P_DEVIATION * norm
-            direction = "oversold → UP"
-        else:  # is_overbought
+            direction = "oversold → UP" if is_oversold else "mild low → UP"
+        else:
             # How far above the overbought threshold is the fast RSI?
-            # Range: 0 (at threshold) → 1 (RSI = 100)
-            norm = (rsi_fast - self.rsi_overbought_fast) / (100.0 - self.rsi_overbought_fast)
-            norm = max(0.0, min(1.0, norm))
+            norm = (rsi_fast - self.rsi_overbought_fast) / max(100.0 - self.rsi_overbought_fast, 1.0)
+            norm = max(-1.0, min(1.0, norm))
             p_up = 0.5 - self._MAX_P_DEVIATION * norm
-            direction = "overbought → DOWN"
+            direction = "overbought → DOWN" if is_overbought else "mild high → DOWN"
 
         # ── Volume spike confirmation ─────────────────────────────────────────
         volume_boosted = False

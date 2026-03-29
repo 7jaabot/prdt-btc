@@ -139,15 +139,17 @@ class OrderBookStrategy(BaseStrategy):
             self.last_skip_reason = "⏸ Could not fetch order book"
             return None
 
-        if abs(imbalance) <= self.imbalance_threshold:
-            self.last_skip_reason = (
-                f"⏸ Imbalance too weak ({imbalance:+.3f}, threshold={self.imbalance_threshold})"
-            )
+        # NOTE: imbalance_threshold pre-filter removed — imbalance_threshold is used
+        # directly in the edge formula below. A weak imbalance → low/negative edge →
+        # filtered naturally by edge_threshold. Safety: imbalance == 0 → no direction.
+        if imbalance == 0:
+            self.last_skip_reason = "⏸ Zero imbalance — no directional signal"
             return None
 
         side = "YES" if imbalance > 0 else "NO"
 
         # Edge: raw value (no cap — p_win cap handles risk via Kelly)
+        # Note: edge may be negative when |imbalance| < threshold; Kelly will be ≤ 0.
         edge = abs(imbalance) - self.imbalance_threshold
 
         # p_win: capped at 0.60 (conservative for a noisy signal)

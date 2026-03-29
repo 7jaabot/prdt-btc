@@ -71,10 +71,12 @@ class MeanReversionStrategy(BaseStrategy):
         expected_total_std = sigma * np.sqrt(n_obs)
         z_score = momentum / expected_total_std if expected_total_std > 0 else 0
 
-        if abs(z_score) < self.min_zscore:
-            self.last_skip_reason = (
-                f"⏸ Z-score too low ({z_score:+.2f}, min ±{self.min_zscore})"
-            )
+        # NOTE: min_zscore threshold check removed — z_score is used to compute edge
+        # directly below. A small z_score → small (or negative) edge → filtered by
+        # edge_threshold or Kelly. Safety: when z_score == 0, direction is undefined;
+        # return None to avoid a directionless trade.
+        if z_score == 0:
+            self.last_skip_reason = "⏸ Z-score is exactly zero — no directional signal"
             return None
 
         # Counter-trend: if price went UP → bet DOWN, and vice versa
@@ -83,7 +85,7 @@ class MeanReversionStrategy(BaseStrategy):
         else:
             side = "YES"  # price went down → expect reversion up
 
-        # Edge scales with z-score extremity
+        # Edge scales with z-score extremity (min_zscore kept as formula parameter)
         edge = (abs(z_score) - self.min_zscore) * self.scaling
 
         # P(win) increases with z-score via sigmoid-like function
