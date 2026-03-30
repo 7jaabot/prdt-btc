@@ -1135,6 +1135,7 @@ class LiveTrader:
             "position_size_usdc", "bet_bnb", "bnb_price_at_entry",
             "bull_pct", "bear_pct",
             "final_bull_pct", "final_bear_pct", "final_total_bnb", "pool_drift_pct",
+            "window_end_ts",
             "bnb_open", "bnb_close", "outcome", "pnl_usdc", "payout_per_share",
             "tx_hash", "tx_status", "claim_tx_hash", "is_mock",
         ]
