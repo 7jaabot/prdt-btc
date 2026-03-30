@@ -39,6 +39,7 @@ from pancake import PancakeClient, PancakeRound
 from strategy import WindowInfo, window_from_round
 from strategies import STRATEGIES
 from paper_trader import PaperTrader
+from round_logger import RoundLogger
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -414,6 +415,9 @@ class PolymarketBot:
         self._strategy_key = next(
             (k for k, v in STRATEGIES.items() if isinstance(self.strategy, v)), ""
         )
+
+        # Round logger — logs ALL rounds (crowd accuracy tracking)
+        self.round_logger = RoundLogger()
 
         self._running = False
         self._last_epoch: int = -1
@@ -921,6 +925,19 @@ class PolymarketBot:
                         f"🔚 Round #{resolve_epoch} result: BNB {direction} {pct_change:.2%}"
                     )
                     self.trader.resolve_trades(resolve_epoch, bnb_open, bnb_close)
+
+                    # Log this round for crowd accuracy tracking (all bots, deduped by epoch)
+                    try:
+                        self.round_logger.log_round(
+                            epoch=resolve_epoch,
+                            lock_ts=float(closed_round.lock_ts),
+                            final_bull_bnb=closed_round.bull_bnb,
+                            final_bear_bnb=closed_round.bear_bnb,
+                            bnb_open=bnb_open,
+                            bnb_close=bnb_close,
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"RoundLogger failed for epoch {resolve_epoch}: {e}")
                 else:
                     self.logger.warning(
                         f"Epoch #{resolve_epoch}: oracle not yet called or prices missing "
