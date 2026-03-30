@@ -150,7 +150,7 @@ async function refreshStrategyComparison(sheets, existingTabs) {
   for (const s of STRATS) {
     const actualTab = existingTabs.find(t => t.toLowerCase() === s.toLowerCase()) || s;
     try {
-      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:Z5000` });
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:AA5000` });
       const rows = res.data.values || [];
       if (rows.length < 2) continue;
       const h = rows[0];
@@ -320,7 +320,7 @@ async function refreshDeepEdge(sheets, existingTabs) {
   for (const s of STRATS) {
     const actualTab = existingTabs.find(t => t.toLowerCase() === s.toLowerCase()) || s;
     try {
-      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:Z5000` });
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:AA5000` });
       const rows = res.data.values || [];
       if (rows.length < 2) continue;
       const h = rows[0];
@@ -403,7 +403,7 @@ async function refreshEpochMap(sheets, existingTabs) {
   for (const s of STRATS) {
     const actualTab = existingTabs.find(t => t.toLowerCase() === s.toLowerCase()) || s;
     try {
-      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:Z5000` });
+      const res = await sheets.spreadsheets.values.get({ spreadsheetId: SSID, range: `'${actualTab}'!A1:AA5000` });
       const rows = res.data.values || [];
       if (rows.length < 2) continue;
       const headers = rows[0];
