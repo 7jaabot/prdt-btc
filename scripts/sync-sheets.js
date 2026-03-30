@@ -50,6 +50,8 @@ async function main() {
       if (fs.existsSync(csvPath)) {
         // Tab name: strategy name for paper, "live_<strategy>" for live
         const tabName = mode === 'paper' ? strategy : `live_${strategy}`;
+        // Skip combined strategies — not useful in sheets
+        if (strategy.startsWith('combined_')) continue;
         csvFiles.push({ path: csvPath, tabName, strategy, mode });
       }
     }
