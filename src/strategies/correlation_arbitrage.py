@@ -64,8 +64,9 @@ _CACHE_TTL = 45.0
 # How many 1m candles to fetch (6 gives us the last 5 complete 1m returns)
 _KLINE_LIMIT = 6
 
-# Max p_up deviation from 0.5 (keeps predictions humble)
-_MAX_P_DEVIATION = 0.15  # p_up in [0.35, 0.65]
+# Max p_up deviation from 0.5
+# 0.49 → p_up in [0.01, 0.99], giving full edge range [0, 0.49]
+_MAX_P_DEVIATION = 0.49  # p_up in [0.01, 0.99]
 
 # Fair odds reference price (pool price ignored)
 _FAIR_ODDS_PRICE = 0.50
@@ -380,5 +381,5 @@ class CorrelationArbitrageStrategy(BaseStrategy):
         else:
             p_up = 0.5 - p_deviation
 
-        # Hard clamp to [0.35, 0.65] — never be overconfident
-        return max(0.35, min(0.65, p_up))
+        # Soft clamp to [0.01, 0.99] — avoid exactly 0/1 (log/division safety)
+        return max(0.01, min(0.99, p_up))

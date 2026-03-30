@@ -75,12 +75,22 @@ class FollowCrowdStrategy(BaseStrategy):
         # compute edge below. A weak majority will produce a low edge that naturally
         # fails the edge_threshold check. Let the edge be the sole filter.
 
-        # Edge: how much the crowd agrees (more agreement = higher edge)
-        edge = (majority_pct - 0.50) * 0.5  # scale: 60%→0.05, 70%→0.10, 90%→0.20
+        # Edge: direct mapping — majority_pct 75% → edge 0.50, 100% → edge 1.0
+        # Factor 2.0 gives full range: 60%→0.20, 70%→0.40, 80%→0.60
+        edge = (majority_pct - 0.50) * 2.0
 
-        # p_win: slight bias toward crowd being right
-        p_win = 0.50 + (majority_pct - 0.50) * 0.2  # 60%→0.52, 80%→0.56
-        p_win = min(p_win, 0.65)
+        # p_win: direct mapping of majority fraction to win probability
+        # majority_pct=0.75 → p_win=0.75, majority_pct=0.60 → p_win=0.60
+        p_win = 0.50 + (majority_pct - 0.50)  # = majority_pct
+        p_win = max(0.01, min(0.99, p_win))  # clamp for safety
+
+        # Apply edge threshold guard
+        if edge <= self.edge_threshold:
+            self.last_skip_reason = (
+                f"⏸ FollowCrowd: edge too low ({edge:.3f} ≤ {self.edge_threshold}) | "
+                f"majority={majority_pct:.1%}"
+            )
+            return None
 
         # Flat position sizing with guards
         pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0

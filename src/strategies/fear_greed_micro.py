@@ -195,15 +195,22 @@ class FearGreedMicroStrategy(BaseStrategy):
 
     def _compute_edge_from_mfi(self, mfi: float) -> float:
         """
-        Normalise le MFI en edge [0, 1].
+        Normalise le MFI en edge [0, 0.50].
 
-        Edge = abs(MFI - baseline) / baseline_std
-        Capped à [0, 1] pour rester dans le domaine valid d'un edge.
+        Strategy: map MFI deviation linearly to p_up, then edge = abs(p_up - 0.50).
+        MFI deviation of 1 std → p_up displacement of 0.10
+        MFI deviation of 5 std → p_up displacement of 0.50
+
+        This spreads edges across [0, 0.50] rather than clustering near 1.0.
         """
         if self.mfi_baseline_std <= 0:
             return 0.0
-        raw_edge = abs(mfi - self.mfi_baseline) / self.mfi_baseline_std
-        return min(1.0, max(0.0, raw_edge))
+        # Number of std deviations from baseline
+        z_score = abs(mfi - self.mfi_baseline) / self.mfi_baseline_std
+        # Map z-score to p_up displacement: z=1→0.10, z=5→0.50
+        # Using linear mapping: displacement = z_score * 0.10, capped at 0.49
+        p_displacement = min(0.49, z_score * 0.10)
+        return p_displacement
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main evaluate() — called by the bot engine

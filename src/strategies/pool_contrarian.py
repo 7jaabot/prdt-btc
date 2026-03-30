@@ -85,8 +85,20 @@ class PoolContrarianStrategy(BaseStrategy):
             self.last_skip_reason = "⏸ Invalid payout (division by zero guard)"
             return None
 
-        # Edge = payout attractiveness. P(win)=0.50 assumed (no directional prediction)
-        edge = (payout - 2.0) / payout  # normalized: ×2→0, ×3→0.33, ×10→0.80
+        # Edge = payout attractiveness. P(win)=0.50 assumed (no directional prediction).
+        # Formula: Kelly-derived edge = 0.5 - 0.5/payout → spreads in [0, 0.50]
+        #   payout=2x → 0.00 (fair), payout=3x → 0.17, payout=4x → 0.25,
+        #   payout=10x → 0.40, payout=∞ → 0.50
+        edge = 0.5 - (0.5 / payout)  # always in [0, 0.50]
+
+        # Apply edge threshold guard
+        if edge <= self.edge_threshold:
+            self.last_skip_reason = (
+                f"⏸ PoolContrarian: edge too low ({edge:.3f} ≤ {self.edge_threshold}) | "
+                f"payout=×{payout:.1f}"
+            )
+            return None
+
         # Flat position sizing with guards
         pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
         caps = [self.bankroll * self.max_bankroll_pct]

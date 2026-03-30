@@ -55,8 +55,9 @@ class RSIReversalStrategy(BaseStrategy):
     # Fair-odds reference (pool price ignored — we trade at 50/50)
     FAIR_ODDS_PRICE = 0.50
 
-    # Max p_up deviation from 0.50 we'll assign (keeps us humble)
-    _MAX_P_DEVIATION = 0.15   # → p_up in [0.35, 0.65]
+    # Max p_up deviation from 0.50 we'll assign
+    # 0.49 → p_up in [0.01, 0.99], giving full edge range [0, 0.49]
+    _MAX_P_DEVIATION = 0.49   # → p_up in [0.01, 0.99]
 
     # Volume spike: if current candle volume > N × median, boost edge
     _VOLUME_SPIKE_MULTIPLIER = 1.5
@@ -195,9 +196,9 @@ class RSIReversalStrategy(BaseStrategy):
             if median_vol > 0 and current_vol >= median_vol * self._VOLUME_SPIKE_MULTIPLIER:
                 # Volume spike: add a small boost in the predicted direction
                 if is_oversold:
-                    p_up = min(0.5 + self._MAX_P_DEVIATION, p_up + self._VOLUME_SPIKE_BOOST)
+                    p_up = min(0.99, p_up + self._VOLUME_SPIKE_BOOST)
                 else:
-                    p_up = max(0.5 - self._MAX_P_DEVIATION, p_up - self._VOLUME_SPIKE_BOOST)
+                    p_up = max(0.01, p_up - self._VOLUME_SPIKE_BOOST)
                 volume_boosted = True
                 logger.info(
                     f"📊 Volume spike confirmed: {current_vol:.2f} vs "

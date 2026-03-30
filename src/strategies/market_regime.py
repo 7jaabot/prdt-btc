@@ -227,8 +227,9 @@ class MarketRegimeStrategy(BaseStrategy):
     """
 
     FAIR_ODDS_PRICE = 0.50
-    # Maximum p_up displacement from 0.5 allowed (keeps humility like GBM)
-    MAX_P_DISPLACEMENT = 0.15
+    # Maximum p_up displacement from 0.5 allowed
+    # 0.49 → p_up in [0.01, 0.99], giving full edge range [0, 0.49]
+    MAX_P_DISPLACEMENT = 0.49
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -321,7 +322,7 @@ class MarketRegimeStrategy(BaseStrategy):
         # hurst_edge ∈ [0, 1] → displacement ∈ [0, MAX_P_DISPLACEMENT]
         displacement = hurst_edge * self.MAX_P_DISPLACEMENT
         p_up_raw = (0.5 + displacement) if direction_up else (0.5 - displacement)
-        p_up = max(0.35, min(0.65, p_up_raw))
+        p_up = max(0.01, min(0.99, p_up_raw))
 
         # ── 9. Edge vs fair odds ──────────────────────────────────────────
         effective_yes_price = self.FAIR_ODDS_PRICE

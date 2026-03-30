@@ -328,11 +328,12 @@ class VolumeBreakoutStrategy(BaseStrategy):
         # Direction: sign of distance from POC
         if current_price > poc:
             # Price above POC → momentum UP
-            p_up = min(0.65, 0.5 + edge_raw * 0.3)
+            # edge_raw ∈ [0, 0.99] → p_up ∈ [0.50, 0.99], edge ∈ [0, 0.49]
+            p_up = min(0.99, 0.5 + edge_raw * 0.5)
             direction = "UP"
         else:
             # Price below POC → momentum DOWN
-            p_up = max(0.35, 0.5 - edge_raw * 0.3)
+            p_up = max(0.01, 0.5 - edge_raw * 0.5)
             direction = "DOWN"
 
         # ── Edge vs threshold ─────────────────────────────────────────────────

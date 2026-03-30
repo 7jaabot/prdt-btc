@@ -232,8 +232,11 @@ class OrderFlowStrategy(BaseStrategy):
         # Map OFI ∈ [-1, 1] to P(Up) ∈ [0.35, 0.65].
         # P(Up) = 0.5 + OFI * 0.30  (max shift ±0.30 at |OFI|=1)
         # Old factor 0.15 produced edges too low to ever pass edge_threshold
-        p_up_raw = 0.5 + ofi * 0.30
-        p_up = max(0.35, min(0.65, p_up_raw))
+        # Map OFI ∈ [-1, 1] to P(Up) ∈ [0, 1].
+        # Factor 0.50: OFI=±1 → p_up=0/1 → full edge range [0, 0.50]
+        # Very loose clamp [0.01, 0.99] to avoid exactly 0/1 (log/division safety)
+        p_up_raw = 0.5 + ofi * 0.50
+        p_up = max(0.01, min(0.99, p_up_raw))
 
         # ── Edge vs fair odds ───────────────────────────────────────────────
         # Always trade against fair odds (0.50) — pool price may be distorted

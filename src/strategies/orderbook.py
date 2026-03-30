@@ -148,12 +148,22 @@ class OrderBookStrategy(BaseStrategy):
 
         side = "YES" if imbalance > 0 else "NO"
 
-        # Edge: raw value (no cap — p_win cap handles risk via Kelly)
-        # Note: edge may be negative when |imbalance| < threshold; Kelly will be ≤ 0.
-        edge = abs(imbalance) - self.imbalance_threshold
+        # Map imbalance ∈ [-1, 1] to p_up ∈ [0.01, 0.99]
+        # imbalance=+1 → p_up=0.99 (pure bid pressure → UP)
+        # imbalance=-1 → p_up=0.01 (pure ask pressure → DOWN)
+        p_up_raw = 0.5 + imbalance * 0.49
+        p_win = max(0.01, min(0.99, p_up_raw))
 
-        # p_win: capped at 0.60 (conservative for a noisy signal)
-        p_win = min(0.5 + abs(imbalance) * 0.2, 0.60)
+        # Edge = abs(p_up - 0.50) — always positive, range [0, 0.49]
+        edge = abs(p_win - 0.50)
+
+        # Apply edge threshold guard
+        if edge <= self.edge_threshold:
+            self.last_skip_reason = (
+                f"⏸ OrderBook: edge too low ({edge:.4f} ≤ {self.edge_threshold}) | "
+                f"imbalance={imbalance:+.3f}"
+            )
+            return None
 
         # Flat position sizing with guards
         pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
@@ -176,7 +186,7 @@ class OrderBookStrategy(BaseStrategy):
         signal = Signal(
             side=side,
             edge=edge,
-            p_up=0.5 + imbalance * 0.2 if side == "YES" else 0.5 + imbalance * 0.2,
+            p_up=p_win,
             yes_price=0.50,
             kelly_fraction=0.0,
             position_size_usdc=pos_size,
