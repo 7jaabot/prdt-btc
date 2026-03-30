@@ -11,7 +11,7 @@ import time
 from typing import Optional
 
 from .base import BaseStrategy
-from strategy import Signal, WindowInfo, kelly_fraction
+from strategy import Signal, WindowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -87,16 +87,14 @@ class PoolContrarianStrategy(BaseStrategy):
 
         # Edge = payout attractiveness. P(win)=0.50 assumed (no directional prediction)
         edge = (payout - 2.0) / payout  # normalized: ×2→0, ×3→0.33, ×10→0.80
-        p_win = 0.50
-        odds = payout - 1.0  # net payout per unit risked
-
-        raw_k = kelly_fraction(p_win, odds)
-        if raw_k <= 0:
-            self.last_skip_reason = f"⏸ Kelly negative (payout ×{payout:.1f})"
+        # Flat position sizing with guards
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
+        caps = [self.bankroll * self.max_bankroll_pct]
+        if pool_total_usdc > 0:
+            caps.append(pool_total_usdc * self.max_pool_pct)
+        pos_size = min(self.position_size_usdc, *caps)
+        if pos_size < self.min_position_usdc:
             return None
-
-        frac = min(raw_k, self.kelly_fraction_cap)
-        pos_size = min(self.bankroll * frac, self.max_position_usdc)
         pos_size = max(0.0, round(pos_size, 2))
 
         if pos_size <= 0:
@@ -112,7 +110,7 @@ class PoolContrarianStrategy(BaseStrategy):
             edge=edge,
             p_up=0.50,
             yes_price=yes_price,
-            kelly_fraction=raw_k,
+            kelly_fraction=0.0,
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,

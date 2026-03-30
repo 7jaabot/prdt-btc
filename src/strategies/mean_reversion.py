@@ -15,7 +15,7 @@ from typing import Optional
 import numpy as np
 
 from .base import BaseStrategy
-from strategy import Signal, WindowInfo, kelly_fraction
+from strategy import Signal, WindowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +92,14 @@ class MeanReversionStrategy(BaseStrategy):
         p_win = 0.5 + 0.1 * min(abs(z_score) - 1.0, 2.0)  # caps at 0.70
         p_win = max(0.50, min(0.70, p_win))
 
-        odds = 1.0  # approximate even money
-        raw_k = kelly_fraction(p_win, odds)
-        if raw_k <= 0:
+        # Flat position sizing with guards
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
+        caps = [self.bankroll * self.max_bankroll_pct]
+        if pool_total_usdc > 0:
+            caps.append(pool_total_usdc * self.max_pool_pct)
+        pos_size = min(self.position_size_usdc, *caps)
+        if pos_size < self.min_position_usdc:
             return None
-
-        frac = min(raw_k, self.kelly_fraction_cap)
-        pos_size = min(self.bankroll * frac, self.max_position_usdc)
         pos_size = max(0.0, round(pos_size, 2))
 
         if pos_size <= 0:
@@ -114,7 +115,7 @@ class MeanReversionStrategy(BaseStrategy):
             edge=edge,
             p_up=1.0 - p_win if side == "NO" else p_win,
             yes_price=0.50,
-            kelly_fraction=raw_k,
+            kelly_fraction=0.0,
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,

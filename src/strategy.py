@@ -301,47 +301,52 @@ def compute_position_size(
     side: str,
     yes_price: float,
     bankroll: float,
+    position_size_usdc: float = 10.0,
+    min_usdc: float = 0.0,
+    max_bankroll_pct: float = 1.0,
+    max_pool_pct: float = 1.0,
+    pool_total_usdc: float = 0.0,
+    # Kept for backward compatibility — ignored
     kelly_fraction_cap: float = 0.25,
-    max_usdc: float = 50.0,
 ) -> tuple[float, float]:
     """
-    Compute recommended position size using fractional Kelly.
+    Compute recommended position size using a flat fixed size with guards.
 
     Args:
-        edge: Our edge (|P(Up) - yes_price|).
-        p_up: Our P(Up) estimate.
-        side: "YES" or "NO".
-        yes_price: Market YES price.
-        bankroll: Current paper trading bankroll in USDC.
-        kelly_fraction_cap: Maximum fraction of Kelly to use (default 25%).
-        max_usdc: Hard cap on position size in USDC.
+        edge: Our edge (|P(Up) - yes_price|) — not used for sizing, kept for compat.
+        p_up: Our P(Up) estimate — not used for sizing, kept for compat.
+        side: "YES" or "NO" — not used for sizing, kept for compat.
+        yes_price: Market YES price — not used for sizing, kept for compat.
+        bankroll: Current bankroll in USDC.
+        position_size_usdc: Flat position size (default $10).
+        min_usdc: Minimum position size in USDC. If position falls below
+            this threshold, the trade is skipped (returns 0.0).
+        max_bankroll_pct: Cap as fraction of bankroll (e.g. 0.10 = 10%).
+        max_pool_pct: Cap as fraction of pool total value in USDC (e.g. 0.10 = 10%).
+            Only applied when pool_total_usdc > 0.
+        pool_total_usdc: Total pool value in USDC (pool_total_bnb × bnb_price).
+            When 0, the pool% cap is skipped.
+        kelly_fraction_cap: Ignored — kept for backward-compatible call sites.
 
     Returns:
-        (raw_kelly, position_size_usdc)
+        (0.0, position_size_usdc)  — kelly_fraction field always 0.0 (log compat).
+        position_size_usdc is 0.0 when position < min_usdc (trade skipped).
     """
-    if side == "YES":
-        p_win = p_up
-        price = yes_price
-    else:
-        p_win = 1.0 - p_up
-        price = 1.0 - yes_price
+    # Flat position size
+    position = position_size_usdc
 
-    # Net odds: if I pay `price` per share, I win (1 - price) per share
-    if price <= 0 or price >= 1:
+    # Apply caps: bankroll%, pool%
+    caps = [bankroll * max_bankroll_pct]
+    if pool_total_usdc > 0:
+        caps.append(pool_total_usdc * max_pool_pct)
+    position = min(position, *caps)
+
+    # Skip if below minimum
+    if position < min_usdc:
         return 0.0, 0.0
 
-    b = (1.0 - price) / price  # Net odds
-    raw_k = kelly_fraction(p_win, b)
-
-    if raw_k <= 0:
-        return raw_k, 0.0  # No edge or negative edge
-
-    # Apply Kelly fraction cap
-    frac = min(raw_k, kelly_fraction_cap)
-    position_size = min(bankroll * frac, max_usdc)
-    position_size = max(0.0, round(position_size, 2))
-
-    return raw_k, position_size
+    position = max(0.0, round(position, 2))
+    return 0.0, position
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,8 +370,10 @@ class Strategy:
     def __init__(self, config: dict):
         cfg = config.get("strategy", {})
         self.edge_threshold = cfg.get("edge_threshold", 0.05)
-        self.kelly_fraction_cap = cfg.get("kelly_fraction", 0.25)
-        self.max_position_usdc = cfg.get("max_position_usdc", 50.0)
+        self.position_size_usdc = cfg.get("position_size_usdc", 10.0)
+        self.min_position_usdc = cfg.get("min_position_usdc", 5.0)
+        self.max_bankroll_pct = cfg.get("max_bankroll_pct", 1.0)
+        self.max_pool_pct = cfg.get("max_pool_pct", 1.0)
         self.entry_window_seconds = cfg.get("entry_window_seconds", 60)
         self.min_prob_diff = cfg.get("min_prob_diff", 0.03)
         self.bankroll = cfg.get("starting_bankroll_usdc", 1000.0)
@@ -464,15 +471,17 @@ class Strategy:
             logger.debug(f"Edge {edge:.3f} < threshold {self.edge_threshold:.3f} — no signal")
             return None
 
-        # Compute position size using effective price
+        # Compute position size (flat sizing with guards)
         raw_k, pos_size = compute_position_size(
             edge=edge,
             p_up=p_up,
             side=side,
             yes_price=effective_yes_price,
             bankroll=self.bankroll,
-            kelly_fraction_cap=self.kelly_fraction_cap,
-            max_usdc=self.max_position_usdc,
+            position_size_usdc=self.position_size_usdc,
+            min_usdc=self.min_position_usdc,
+            max_bankroll_pct=self.max_bankroll_pct,
+            max_pool_pct=self.max_pool_pct,
         )
 
         if pos_size <= 0:

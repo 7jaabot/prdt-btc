@@ -258,18 +258,23 @@ class OrderFlowStrategy(BaseStrategy):
             return None
 
         # ── Position size ───────────────────────────────────────────────────
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
         raw_k, pos_size = compute_position_size(
             edge=edge,
             p_up=p_up,
             side=side,
             yes_price=effective_yes_price,
             bankroll=self.bankroll,
-            kelly_fraction_cap=self.kelly_fraction_cap,
-            max_usdc=self.max_position_usdc,
+            position_size_usdc=self.position_size_usdc,
+        
+            min_usdc=self.min_position_usdc,
+            max_bankroll_pct=self.max_bankroll_pct,
+            max_pool_pct=self.max_pool_pct,
+            pool_total_usdc=pool_total_usdc,
         )
 
         if pos_size <= 0:
-            self.last_skip_reason = f"⏸ OFI: position size is 0 (Kelly={raw_k:.4f})"
+            self.last_skip_reason = f"⏸ OFI: position size is 0 (below min)"
             return None
 
         signal = Signal(
@@ -277,7 +282,7 @@ class OrderFlowStrategy(BaseStrategy):
             edge=edge,
             p_up=p_up,
             yes_price=effective_yes_price,
-            kelly_fraction=raw_k,
+            kelly_fraction=0.0,
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,

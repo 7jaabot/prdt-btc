@@ -1,8 +1,10 @@
 {
   "strategy": {
     "edge_threshold": 0.10,
-    "kelly_fraction": 0.25,
-    "max_position_usdc": 15.0,
+    "position_size_usdc": 10.0,
+    "min_position_usdc": 5.0,
+    "max_bankroll_pct": 0.10,
+    "max_pool_pct": 0.10,
     "starting_bankroll_usdc": 1000.0,
     "entry_window_seconds": 20,
     "sniper_window_seconds": 7,

@@ -309,6 +309,9 @@ def select_mode_interactive(config: dict) -> tuple[str, object, object]:
             break
         print("Invalid choice. Please enter 1 or 2.")
 
+    # Inject paper/live mode flag so strategies can use it for position sizing guards
+    config["_is_paper"] = (choice == "2")
+
     # Select strategy FIRST so we can set paths before creating the trader
     strategy = select_strategy_interactive(config)
 
@@ -660,7 +663,7 @@ class PolymarketBot:
             # For live mode: pre-build and pre-sign both transactions
             if self.mode == "live" and hasattr(self.trader, 'prepare_transactions'):
                 bnb_price = self.binance.last_price or 600.0
-                bet_usdc = self.config.get("strategy", {}).get("max_position_usdc", 15.0)
+                bet_usdc = self.config.get("strategy", {}).get("min_position_usdc", 5.0)
                 bet_bnb = bet_usdc / bnb_price
                 try:
                     ok = await loop.run_in_executor(
@@ -1158,9 +1161,11 @@ def main():
     if args.live or args.fresh or args.paper:
         strategy_key = args.strategy
         strategy_cls = STRATEGIES.get(strategy_key, STRATEGIES["gbm"])
+        # Inject paper/live mode flag before creating strategy (for position sizing guards)
+        config["_is_paper"] = not args.live
         strategy = strategy_cls(config)
     else:
-        strategy = None  # will be set by interactive menu
+        strategy = None  # will be set by interactive menu (injects _is_paper itself)
         strategy_key = None
 
     # Helper: inject per-strategy file paths into config to isolate parallel runs

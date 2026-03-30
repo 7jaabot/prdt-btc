@@ -218,14 +218,19 @@ class CorrelationArbitrageStrategy(BaseStrategy):
             return None
 
         # ── 6. Position sizing ────────────────────────────────────────────────
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
         raw_k, pos_size = compute_position_size(
             edge=edge,
             p_up=p_up,
             side=side,
             yes_price=_FAIR_ODDS_PRICE,
             bankroll=self.bankroll,
-            kelly_fraction_cap=self.kelly_fraction_cap,
-            max_usdc=self.max_position_usdc,
+            position_size_usdc=self.position_size_usdc,
+            min_usdc=self.min_position_usdc,
+            max_bankroll_pct=self.max_bankroll_pct,
+            max_pool_pct=self.max_pool_pct,
+            pool_total_usdc=pool_total_usdc,
         )
 
         if pos_size <= 0:
@@ -236,7 +241,7 @@ class CorrelationArbitrageStrategy(BaseStrategy):
             edge=edge,
             p_up=p_up,
             yes_price=_FAIR_ODDS_PRICE,
-            kelly_fraction=raw_k,
+            kelly_fraction=0.0,
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,

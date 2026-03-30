@@ -19,7 +19,7 @@ from typing import Optional
 import requests
 
 from .base import BaseStrategy
-from strategy import Signal, WindowInfo, compute_position_size, kelly_fraction
+from strategy import Signal, WindowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -155,15 +155,14 @@ class OrderBookStrategy(BaseStrategy):
         # p_win: capped at 0.60 (conservative for a noisy signal)
         p_win = min(0.5 + abs(imbalance) * 0.2, 0.60)
 
-        # Kelly sizing
-        odds = 1.0
-        raw_k = kelly_fraction(p_win, odds)
-        if raw_k <= 0:
-            self.last_skip_reason = f"⏸ Kelly negative (p_win={p_win:.2f})"
+        # Flat position sizing with guards
+        pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0
+        caps = [self.bankroll * self.max_bankroll_pct]
+        if pool_total_usdc > 0:
+            caps.append(pool_total_usdc * self.max_pool_pct)
+        pos_size = min(self.position_size_usdc, *caps)
+        if pos_size < self.min_position_usdc:
             return None
-
-        frac = min(raw_k, self.kelly_fraction_cap)
-        pos_size = min(self.bankroll * frac, self.max_position_usdc)
         pos_size = max(0.0, round(pos_size, 2))
 
         if pos_size <= 0:
@@ -179,7 +178,7 @@ class OrderBookStrategy(BaseStrategy):
             edge=edge,
             p_up=0.5 + imbalance * 0.2 if side == "YES" else 0.5 + imbalance * 0.2,
             yes_price=0.50,
-            kelly_fraction=raw_k,
+            kelly_fraction=0.0,
             position_size_usdc=pos_size,
             timestamp=time.time(),
             is_mock=is_mock_data,
