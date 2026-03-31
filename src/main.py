@@ -481,7 +481,9 @@ class PolymarketBot:
             except Exception as e:
                 self.logger.error(f"Error in main loop tick: {e}", exc_info=True)
 
-            await asyncio.sleep(self._poll_interval)
+            # Poll faster during entry window to not miss the 3s sniper window
+            interval = 1.0 if self._in_entry_window else self._poll_interval
+            await asyncio.sleep(interval)
 
     async def _update_live_balance(self):
         """Periodically refresh cached live wallet balance (non-blocking)."""
@@ -1233,7 +1235,9 @@ class ParallelBot:
                 await self._tick()
             except Exception as e:
                 self.logger.error(f"ParallelBot tick error: {e}", exc_info=True)
-            await asyncio.sleep(self._poll_interval)
+            # Poll faster during entry window to not miss the 3s sniper window
+            interval = 1.0 if self._in_entry_window else self._poll_interval
+            await asyncio.sleep(interval)
 
     async def _update_chainlink_price(self):
         while self._running:

@@ -817,18 +817,76 @@ async function refreshEpochMap(sheets, existingTabs) {
     }
   }
 
-  // ── 🎯 Optimized Combinations block ──────────────────────────────────
-  // Align vertically with the 🏆 block — pad with empty rows to match
-  const comboStartRow = leftRows.length - (comboResults.length > 0 ? comboResults.length + 2 : 0);
-  const optComboRows = [];
-  // Pad to align with 🏆 block start row
-  for (let i = 0; i < comboStartRow; i++) {
-    optComboRows.push([]);
-  }
-  optComboRows.push(['🎯 OPTIMIZED COMBINATIONS (edge-filtered consensus)']);
-  optComboRows.push(['Combination', 'Size', 'Epochs', 'Wins', 'Win Rate %', 'PnL ($15/trade)', 'Better?', 'Brute WR%', 'Edge Filter Used']);
+  // ── 📊 Consensus by count + Portfolio aggregate (I column, top) ─────
+  const midRows = [];
 
-  // Only use strategies that have at least one profitable bucket
+  // Block 1: Consensus WR by number of agreeing strategies
+  midRows.push(['📊 CONSENSUS BY COUNT']);
+  midRows.push(['Min Strategies Agreeing', 'Epochs', 'Wins', 'Win Rate %', 'PnL ($10/trade)']);
+
+  for (let minAgree = 2; minAgree <= activeStrats.length; minAgree++) {
+    let epochs = 0, wins = 0;
+    for (const epoch of sortedEpochs) {
+      const sides = activeStrats.map(s => stratData[s]?.[epoch]?.side).filter(Boolean);
+      if (sides.length < minAgree) continue;
+      const upCount = sides.filter(s => s === 'UP').length;
+      const downCount = sides.filter(s => s === 'DOWN').length;
+      const maxAgree = Math.max(upCount, downCount);
+      if (maxAgree < minAgree) continue;
+
+      let actual = '';
+      for (const s of activeStrats) {
+        const d = stratData[s]?.[epoch];
+        if (d?.open > 0 && d?.close > 0) { actual = d.close > d.open ? 'UP' : 'DOWN'; break; }
+      }
+      if (!actual) continue;
+
+      epochs++;
+      const consensusSide = upCount >= downCount ? 'UP' : 'DOWN';
+      if (consensusSide === actual) wins++;
+    }
+    const wr = epochs > 0 ? r2(wins / epochs * 100) : 0;
+    const pnl = r2(wins * 10 - (epochs - wins) * 10);
+    midRows.push([`${minAgree}+ strategies agree`, epochs, wins, wr, pnl]);
+  }
+
+  // Pad midRows to exactly 17 rows so 🎯 starts at row 18 (I18)
+  while (midRows.length < 17) {
+    midRows.push([]);
+  }
+
+  // ── 🎯 Optimized Combinations — starts at I18 ──
+  midRows.push(['🎯 OPTIMIZED COMBINATIONS (edge-filtered consensus)']);
+  midRows.push(['Combination', 'Size', 'Epochs', 'Wins', 'Win Rate %', 'PnL ($15/trade)', 'Better?', 'Brute WR%', 'Edge Filter Used']);
+
+  // ── 📈 Portfolio aggregate (separate block at O1) ──
+  const portfolioRows = [];
+  portfolioRows.push(['📈 PORTFOLIO AGGREGATE (all strategies independent)']);
+  portfolioRows.push(['Metric', 'Value']);
+
+  let totalTrades = 0, totalWins = 0, totalLosses = 0, totalPnl = 0;
+  for (const s of activeStrats) {
+    const trades = Object.values(stratData[s]);
+    const w = trades.filter(t => t.outcome === 'WIN').length;
+    const l = trades.filter(t => t.outcome === 'LOSS').length;
+    const pnl = trades.reduce((sum, t) => sum + t.pnl, 0);
+    totalTrades += w + l;
+    totalWins += w;
+    totalLosses += l;
+    totalPnl += pnl;
+  }
+
+  const portfolioWr = totalTrades > 0 ? r2(totalWins / totalTrades * 100) : 0;
+  const portfolioRoi = totalTrades > 0 ? r2(totalPnl / (totalTrades * 10) * 100) : 0;
+
+  portfolioRows.push(['Total Trades', totalTrades]);
+  portfolioRows.push(['Total Wins', totalWins]);
+  portfolioRows.push(['Total Losses', totalLosses]);
+  portfolioRows.push(['Win Rate %', portfolioWr]);
+  portfolioRows.push(['Total PnL ($)', r2(totalPnl)]);
+  portfolioRows.push(['ROI %', portfolioRoi]);
+  portfolioRows.push(['Strategies Active', activeStrats.length]);
+
   const optEligibleStrats = comboStrats.filter(s => profitableBuckets[s] && profitableBuckets[s].length > 0);
 
   const optComboResults = [];
@@ -891,10 +949,10 @@ async function refreshEpochMap(sheets, existingTabs) {
   });
 
   if (optComboResults.length === 0) {
-    optComboRows.push(['Not enough data for optimized combinations']);
+    midRows.push(['Not enough data for optimized combinations']);
   } else {
     for (const c of optComboResults) {
-      optComboRows.push([c.name, c.size, c.epochs, c.wins, c.wr, c.pnl, c.better, c.bruteWr, c.filterUsed]);
+      midRows.push([c.name, c.size, c.epochs, c.wins, c.wr, c.pnl, c.better, c.bruteWr, c.filterUsed]);
     }
   }
 
@@ -918,12 +976,21 @@ async function refreshEpochMap(sheets, existingTabs) {
   });
   await sleep(1200);
 
-  // Write 🎯 Optimized Combinations block starting at column I (next to 🏆 block)
+  // Write consensus + optimized combos at I1
   await sheets.spreadsheets.values.update({
     spreadsheetId: SSID,
     range: `'${stratTab}'!I1`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: optComboRows },
+    requestBody: { values: midRows },
+  });
+  await sleep(1200);
+
+  // Write portfolio aggregate at O1
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SSID,
+    range: `'${stratTab}'!O1`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: portfolioRows },
   });
   await sleep(1200);
 
