@@ -90,7 +90,7 @@ class MeanReversionStrategy(BaseStrategy):
 
         # P(win) increases with z-score via sigmoid-like function
         p_win = 0.5 + 0.1 * min(abs(z_score) - 1.0, 2.0)  # caps at 0.70
-        p_win = max(0.50, min(0.70, p_win))
+        p_win = max(0.01, min(0.99, p_win))
 
         # Flat position sizing with guards
         pool_total_usdc = pool_total_bnb * prices[-1] if prices else 0.0

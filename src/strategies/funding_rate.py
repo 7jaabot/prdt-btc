@@ -199,7 +199,7 @@ class FundingRateStrategy(BaseStrategy):
         abs_rate = abs(funding_rate)
         normalized_edge = min(1.0, abs_rate / max(self.max_expected_rate, 1e-9))
         p_win = 0.5 + normalized_edge * P_WIN_EDGE_SCALE
-        p_win = max(0.50, min(0.65, p_win))
+        p_win = max(0.01, min(0.99, p_win))
 
         logger.debug(
             f"p_win: abs_rate={abs_rate:.6f} "

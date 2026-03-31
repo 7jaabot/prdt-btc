@@ -237,7 +237,7 @@ class OpenInterestStrategy(BaseStrategy):
             p_up = 0.50 - directional_bias
 
         # Clamp to [0.35, 0.65] — same humility as GBM strategy
-        p_up = max(0.35, min(0.65, p_up))
+        p_up = max(0.01, min(0.99, p_up))
 
         # ── Edge calculation (always fair odds) ──────────────────────────────
         effective_yes_price = self.FAIR_ODDS_PRICE

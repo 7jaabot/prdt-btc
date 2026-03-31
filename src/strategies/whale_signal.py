@@ -263,7 +263,7 @@ class WhaleSignalStrategy(BaseStrategy):
 
         # Mapper en probabilité : ±1 % de momentum → ±10 % de prob
         p_up = 0.50 + momentum * 10.0
-        return max(0.40, min(0.60, p_up))
+        return max(0.01, min(0.99, p_up))
 
     # ──────────────────────────────────────────────────────────────────────────
     # evaluate()
@@ -311,7 +311,7 @@ class WhaleSignalStrategy(BaseStrategy):
             # Convertir le net_flow en P(Up)
             # Normaliser : 1000 BNB de net flow ≈ ±5 % de biais
             bias = net_flow / 20_000.0  # scale factor empirique
-            p_up = max(0.35, min(0.65, 0.50 + bias))
+            p_up = max(0.01, min(0.99, 0.50 + bias))
             logger.info(
                 f"Whale: net_flow={net_flow:+.0f} BNB → bias={bias:+.4f} → "
                 f"P(Up)={p_up:.3f}"

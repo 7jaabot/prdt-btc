@@ -51,8 +51,8 @@ _BUFFER_MAX_AGE_SECONDS = 3600  # 1 hour
 _HISTORY_MAX_BUCKETS = 12
 
 # Clamp for P(Up) from liquidation signal
-_P_UP_MIN = 0.35
-_P_UP_MAX = 0.65
+_P_UP_MIN = 0.01
+_P_UP_MAX = 0.99
 
 
 # ─────────────────────────────────────────────────────────────────────────────
