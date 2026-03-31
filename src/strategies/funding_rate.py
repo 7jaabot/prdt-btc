@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_EXPECTED_RATE = 0.0005
 
 # p_win boost per unit of normalized edge (max boost = 0.15 → p_win up to 0.65)
-P_WIN_EDGE_SCALE = 0.15
+P_WIN_EDGE_SCALE = 0.49
 
 # How long (seconds) to cache the funding rate before re-fetching
 CACHE_TTL_SECONDS = 60.0

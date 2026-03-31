@@ -57,25 +57,21 @@ class PoolContrarianStrategy(BaseStrategy):
         bull_ratio = pool_bull_bnb / pool_total_bnb
         bear_ratio = pool_bear_bnb / pool_total_bnb
 
-        # Determine if pool is imbalanced enough
-        if bull_ratio >= self.imbalance_threshold:
+        # Bet contrarian: against the majority side
+        # NOTE: imbalance_threshold removed — payout directly computes edge,
+        # a balanced pool → low payout → low edge → naturally filtered.
+        if bull_ratio >= bear_ratio:
             # Crowd is bullish → bet bear (contrarian)
             side = "NO"
             our_side_bnb = pool_bear_bnb
             payout = (pool_total_bnb * (1 - PANCAKE_FEE)) / pool_bear_bnb if pool_bear_bnb > 0 else 0
             crowd_pct = bull_ratio
-        elif bear_ratio >= self.imbalance_threshold:
+        else:
             # Crowd is bearish → bet bull (contrarian)
             side = "YES"
             our_side_bnb = pool_bull_bnb
             payout = (pool_total_bnb * (1 - PANCAKE_FEE)) / pool_bull_bnb if pool_bull_bnb > 0 else 0
             crowd_pct = bear_ratio
-        else:
-            self.last_skip_reason = (
-                f"⏸ Pool balanced (bull={bull_ratio:.0%} bear={bear_ratio:.0%}, "
-                f"need >{self.imbalance_threshold:.0%})"
-            )
-            return None
 
         # NOTE: min_payout check removed — payout directly computes edge below.
         # A low payout → low edge → naturally filtered by edge_threshold.

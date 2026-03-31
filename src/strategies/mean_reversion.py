@@ -85,11 +85,13 @@ class MeanReversionStrategy(BaseStrategy):
         else:
             side = "YES"  # price went down → expect reversion up
 
-        # Edge scales with z-score extremity (min_zscore kept as formula parameter)
-        edge = (abs(z_score) - self.min_zscore) * self.scaling
+        # Edge = abs(z_score) mapped to [0, 0.50] range
+        # z=0 → edge 0, z=2 → edge 0.20, z=5 → edge 0.50
+        edge = min(abs(z_score) * 0.10, 0.50)
 
-        # P(win) increases with z-score via sigmoid-like function
-        p_win = 0.5 + 0.1 * min(abs(z_score) - 1.0, 2.0)  # caps at 0.70
+        # P(win) = direct mapping from z-score extremity
+        # z=0 → 0.50 (coin flip), z=5 → 1.0 (very confident)
+        p_win = 0.50 + min(abs(z_score) * 0.10, 0.49)
         p_win = max(0.01, min(0.99, p_win))
 
         # Flat position sizing with guards
