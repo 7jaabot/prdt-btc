@@ -333,19 +333,17 @@ class CorrelationArbitrageStrategy(BaseStrategy):
           DOWN: weighted_move < -threshold AND  bnb_return > lag_threshold * weighted_move
                 (i.e. BNB is positive or less negative than expected)
         """
-        thr = self.corr_btc_threshold
+        # NOTE: corr_btc_threshold pre-filter removed — weighted_move feeds p_up → edge.
+        # A small weighted_move → low p_up displacement → low edge → filtered by edge_threshold.
+        # We only need a direction signal: BNB lagging behind BTC/ETH.
         lag = self.corr_lag_threshold
 
-        if weighted_move > thr:
-            # BTC/ETH moved up strongly
-            # BNB must have done less than `lag` fraction of that move
+        if weighted_move > 0:
+            # BTC/ETH moved up — BNB must have done less than `lag` fraction
             if bnb_return < lag * weighted_move:
                 return "YES"
-
-        elif weighted_move < -thr:
-            # BTC/ETH moved down strongly
-            # BNB must still be higher than `lag` fraction of that (negative) move
-            # i.e. bnb_return > lag * weighted_move  (less negative than expected)
+        elif weighted_move < 0:
+            # BTC/ETH moved down — BNB must be less negative than expected
             if bnb_return > lag * weighted_move:
                 return "NO"
 
