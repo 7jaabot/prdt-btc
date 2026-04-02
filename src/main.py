@@ -698,7 +698,7 @@ class PolymarketBot:
             # For live mode: pre-build and pre-sign both transactions
             if self.mode == "live" and hasattr(self.trader, 'prepare_transactions'):
                 bnb_price = self.binance.last_price or 600.0
-                bet_usdc = self.config.get("strategy", {}).get("min_position_usdc", 5.0)
+                bet_usdc = self.config.get("strategy", {}).get("position_size_usdc", 10.0)
                 bet_bnb = bet_usdc / bnb_price
                 try:
                     ok = await loop.run_in_executor(
