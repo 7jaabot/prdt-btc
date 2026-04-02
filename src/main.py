@@ -459,6 +459,9 @@ class PolymarketBot:
         self._sniped_this_epoch: bool = False  # Phase 2 complete (sniper shot fired)
         self._sniper_tx_hash: str | None = None  # tx hash from fire_transaction (live mode)
 
+        # Pool snapshot tracker: keyed by epoch, value is list of snapshots
+        self._pool_snapshots: dict = {}
+
     def _refresh_display(self):
         """Push a fresh render to the Live display if it's active."""
         if self._live_ref is not None:
@@ -552,6 +555,18 @@ class PolymarketBot:
         # Calculate time until lock_ts (end of bet phase)
         seconds_to_lock = round_data.lock_ts - now
         self._in_entry_window = 0 < seconds_to_lock <= self.strategy.entry_window_seconds
+
+        # Pool snapshot collection — record during last 20s before lock
+        if should_poll and 0 < seconds_to_lock <= 20:
+            if current_epoch not in self._pool_snapshots:
+                self._pool_snapshots[current_epoch] = []
+            self._pool_snapshots[current_epoch].append({
+                'seconds_to_lock': round(seconds_to_lock, 1),
+                'total_bnb': round_data.total_bnb,
+                'bull_bnb': round_data.bull_bnb,
+                'bear_bnb': round_data.bear_bnb,
+                'ts': now,
+            })
 
         # Build WindowInfo from contract round data
         window = window_from_round(round_data, entry_window_seconds=self.strategy.entry_window_seconds)
@@ -1019,6 +1034,15 @@ class PolymarketBot:
                 edge=live_edge,
             )
 
+        # Log pool snapshots for the epoch that just ended
+        if self._last_epoch > 0 and self._last_epoch in self._pool_snapshots:
+            prev_snapshots = self._pool_snapshots.pop(self._last_epoch)
+            if prev_snapshots:
+                try:
+                    self.round_logger.log_pool_snapshots(self._last_epoch, prev_snapshots)
+                except Exception as e:
+                    self.logger.warning(f"log_pool_snapshots failed for epoch {self._last_epoch}: {e}")
+
         # Advance to new epoch
         self._last_epoch = new_epoch
         self._traded_this_epoch = False
@@ -1218,6 +1242,9 @@ class ParallelBot:
             self._runners[0]["strategy"].entry_window_seconds if self._runners else 60
         )
 
+        # Pool snapshot tracker: keyed by epoch, value is list of snapshots
+        self._pool_snapshots: dict = {}
+
     def _refresh_display(self):
         if self._live_ref is not None:
             try:
@@ -1280,6 +1307,18 @@ class ParallelBot:
 
         seconds_to_lock = round_data.lock_ts - now
         self._in_entry_window = 0 < seconds_to_lock <= self._entry_window_seconds
+
+        # Pool snapshot collection — record during last 20s before lock
+        if should_poll and 0 < seconds_to_lock <= 20:
+            if current_epoch not in self._pool_snapshots:
+                self._pool_snapshots[current_epoch] = []
+            self._pool_snapshots[current_epoch].append({
+                'seconds_to_lock': round(seconds_to_lock, 1),
+                'total_bnb': round_data.total_bnb,
+                'bull_bnb': round_data.bull_bnb,
+                'bear_bnb': round_data.bear_bnb,
+                'ts': now,
+            })
 
         window = window_from_round(round_data, entry_window_seconds=self._entry_window_seconds)
         self.dashboard.update_window(window)
@@ -1498,6 +1537,15 @@ class ParallelBot:
                     self.logger.warning(
                         f"Epoch #{resolve_epoch}: oracle not settled — skipping resolution"
                     )
+
+        # Log pool snapshots for the epoch that just ended
+        if self._last_epoch > 0 and self._last_epoch in self._pool_snapshots:
+            prev_snapshots = self._pool_snapshots.pop(self._last_epoch)
+            if prev_snapshots:
+                try:
+                    self.round_logger.log_pool_snapshots(self._last_epoch, prev_snapshots)
+                except Exception as e:
+                    self.logger.warning(f"ParallelBot: log_pool_snapshots failed for epoch {self._last_epoch}: {e}")
 
         # Reset per-epoch state for all runners
         for runner in self._runners:

@@ -26,6 +26,21 @@ JSON_FILE = "logs/rounds/all_rounds.json"
 CSV_FILE = "logs/rounds/all_rounds.csv"
 LOCK_FILE = "logs/rounds/.lock"
 
+POOL_SNAPSHOTS_JSON_FILE = "logs/rounds/pool_snapshots.json"
+POOL_SNAPSHOTS_CSV_FILE = "logs/rounds/pool_snapshots.csv"
+POOL_SNAPSHOTS_LOCK_FILE = "logs/rounds/.pool_snapshots_lock"
+POOL_SNAPSHOTS_MAX_EPOCHS = 1000
+
+POOL_SNAPSHOTS_CSV_COLUMNS = [
+    "epoch",
+    "seconds_to_lock",
+    "total_bnb",
+    "bull_bnb",
+    "bear_bnb",
+    "bull_pct",
+    "bear_pct",
+]
+
 CSV_COLUMNS = [
     "epoch",
     "lock_ts",
@@ -198,3 +213,118 @@ class RoundLogger:
     def round_count(self) -> int:
         """Return number of logged rounds."""
         return len(self._load_rounds())
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Pool snapshot methods
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _pool_snapshots_paths(self):
+        json_path = os.path.join(self._dir, "pool_snapshots.json")
+        csv_path = os.path.join(self._dir, "pool_snapshots.csv")
+        lock_path = os.path.join(self._dir, ".pool_snapshots_lock")
+        return json_path, csv_path, lock_path
+
+    def _load_pool_snapshots(self, json_path: str) -> dict:
+        """Load existing pool snapshots from JSON. Returns {epoch_str: [snapshots]}."""
+        if not os.path.exists(json_path):
+            return {}
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"RoundLogger: could not load pool_snapshots.json: {e}")
+            return {}
+
+    def _save_pool_snapshots(self, snapshots: dict, json_path: str, csv_path: str):
+        """Persist pool snapshots dict to JSON and append new rows to CSV."""
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(snapshots, f)
+        self._export_pool_snapshots_csv(snapshots, csv_path)
+
+    def _export_pool_snapshots_csv(self, snapshots: dict, csv_path: str):
+        """Re-export all pool snapshots to CSV (sorted by epoch then seconds_to_lock desc)."""
+        try:
+            rows = []
+            for epoch_key in sorted(snapshots.keys(), key=lambda k: int(k)):
+                epoch = int(epoch_key)
+                for snap in snapshots[epoch_key]:
+                    total = snap.get("total_bnb", 0)
+                    bull = snap.get("bull_bnb", 0)
+                    bear = snap.get("bear_bnb", 0)
+                    bull_pct = round(bull / total, 6) if total > 0 else 0.0
+                    bear_pct = round(bear / total, 6) if total > 0 else 0.0
+                    rows.append({
+                        "epoch": epoch,
+                        "seconds_to_lock": snap.get("seconds_to_lock", 0),
+                        "total_bnb": round(total, 6),
+                        "bull_bnb": round(bull, 6),
+                        "bear_bnb": round(bear, 6),
+                        "bull_pct": bull_pct,
+                        "bear_pct": bear_pct,
+                    })
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=POOL_SNAPSHOTS_CSV_COLUMNS, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(rows)
+        except OSError as e:
+            logger.warning(f"RoundLogger: pool_snapshots CSV export failed: {e}")
+
+    def log_pool_snapshots(self, epoch: int, snapshots: list[dict]) -> bool:
+        """
+        Log pool snapshots for a completed epoch.
+
+        Args:
+            epoch: PancakeSwap epoch number
+            snapshots: list of {seconds_to_lock, total_bnb, bull_bnb, bear_bnb, ts}
+
+        Returns:
+            True if logged, False if skipped (no snapshots / duplicate).
+        """
+        if not snapshots:
+            return False
+
+        epoch_key = str(epoch)
+        json_path, csv_path, lock_path = self._pool_snapshots_paths()
+
+        # Strip 'ts' field (not needed in persistent store) and clean up
+        clean_snapshots = [
+            {
+                "seconds_to_lock": s.get("seconds_to_lock", 0),
+                "total_bnb": s.get("total_bnb", 0),
+                "bull_bnb": s.get("bull_bnb", 0),
+                "bear_bnb": s.get("bear_bnb", 0),
+            }
+            for s in snapshots
+        ]
+
+        lock_fd = open(lock_path, "w")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+            all_snapshots = self._load_pool_snapshots(json_path)
+
+            # Deduplicate
+            if epoch_key in all_snapshots:
+                logger.debug(f"RoundLogger: pool snapshots for epoch {epoch} already logged — skipping")
+                return False
+
+            all_snapshots[epoch_key] = clean_snapshots
+
+            # Rotate: keep only the last POOL_SNAPSHOTS_MAX_EPOCHS epochs
+            if len(all_snapshots) > POOL_SNAPSHOTS_MAX_EPOCHS:
+                sorted_keys = sorted(all_snapshots.keys(), key=lambda k: int(k))
+                to_remove = len(all_snapshots) - POOL_SNAPSHOTS_MAX_EPOCHS
+                for old_key in sorted_keys[:to_remove]:
+                    del all_snapshots[old_key]
+
+            self._save_pool_snapshots(all_snapshots, json_path, csv_path)
+
+            logger.info(
+                f"📸 Pool snapshots logged: epoch={epoch} | {len(clean_snapshots)} snapshots"
+            )
+            return True
+
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
