@@ -63,6 +63,12 @@ async function main() {
     csvFiles.push({ path: allRoundsCsv, tabName: 'all_rounds', strategy: 'all_rounds', mode: 'rounds' });
   }
 
+  // Also include pool_snapshots.csv if it exists
+  const poolSnapshotsCsv = path.join(LOGS_DIR, 'rounds', 'pool_snapshots.csv');
+  if (fs.existsSync(poolSnapshotsCsv)) {
+    csvFiles.push({ path: poolSnapshotsCsv, tabName: 'pool_snapshots', strategy: 'pool_snapshots', mode: 'rounds' });
+  }
+
   if (csvFiles.length === 0) {
     console.log('No CSV files found to sync.');
     return;
@@ -146,7 +152,7 @@ async function main() {
 async function refreshStrategyComparison(sheets, existingTabs) {
   const SSID = SPREADSHEET_ID;
   const analysisTabs = ['🏆 Strategy Comparison', '🔗 Cross-Strategy (Epoch)', '📊 Deep Edge Analysis', '🎯 Optimal Filters', '📈 PnL Curves', '🕐 Time Heatmap', '👥 Crowd Accuracy'];
-  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds');
+  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds' && t !== 'pool_snapshots');
   const tab = existingTabs.find(t => t.includes('Strategy Comparison'));
   if (!tab) { console.log('  ⏸ Strategy Comparison tab not found'); return; }
 
@@ -256,9 +262,12 @@ async function refreshStrategyComparison(sheets, existingTabs) {
   const globalPctDrift10 = globalDriftCount > 0 ? r2(globalDrift10Count / globalDriftCount * 100) + '%' : 'N/A';
   const globalAvgTiming = globalTimingCount > 0 ? r2(globalTimingSum / globalTimingCount) + 's' : 'N/A';
 
+  const syncTimestamp = new Date().toLocaleString('en-CH', { timeZone: 'Europe/Zurich', dateStyle: 'short', timeStyle: 'medium' });
+
   const n = results.length;
   const outputRows = [
     ['📊 TRADING QUALITY (global)'],
+    ['Last sync:', syncTimestamp],
     ['Avg Pool Drift:', globalAvgDrift],
     ['Trades with drift >5%:', globalPctDrift5],
     ['Trades with drift >10%:', globalPctDrift10],
@@ -319,7 +328,7 @@ async function refreshStrategyComparison(sheets, existingTabs) {
 async function refreshDeepEdge(sheets, existingTabs) {
   const SSID = SPREADSHEET_ID;
   const analysisTabs = ['🏆 Strategy Comparison', '🔗 Cross-Strategy (Epoch)', '📊 Deep Edge Analysis', '🎯 Optimal Filters', '📈 PnL Curves', '🕐 Time Heatmap', '👥 Crowd Accuracy'];
-  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds');
+  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds' && t !== 'pool_snapshots');
   const tab = existingTabs.find(t => t.includes('Deep Edge'));
   if (!tab) { console.log('  ⏸ Deep Edge tab not found'); return; }
 
@@ -530,6 +539,144 @@ async function refreshCrowdAccuracy(sheets, existingTabs) {
     hourlyRows.push([String(h).padStart(2, '0'), bucket.length, bAcc, avgConv]);
   }
 
+  // ── Section 5: Pool Activity Before Lock ──────────────────────────────
+  // Load pool_snapshots tab if available
+  const poolSnapshotsTab = existingTabs.find(t => t.toLowerCase() === 'pool_snapshots');
+  let poolActivityRows = [['── Pool Activity Before Lock ──']];
+
+  if (poolSnapshotsTab) {
+    try {
+      const psRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SSID,
+        range: `'${poolSnapshotsTab}'!A1:G200000`,
+      });
+      const psRows = psRes.data.values || [];
+
+      if (psRows.length >= 2) {
+        const psH = psRows[0];
+        const psIEpoch = psH.indexOf('epoch');
+        const psIStl = psH.indexOf('seconds_to_lock');
+        const psITotal = psH.indexOf('total_bnb');
+
+        if (psIEpoch >= 0 && psIStl >= 0 && psITotal >= 0) {
+          // Parse all snapshots
+          const allSnaps = [];
+          for (let i = 1; i < psRows.length; i++) {
+            const r = psRows[i];
+            const epoch = parseInt(r[psIEpoch]) || 0;
+            const stl = parseFloat(r[psIStl]) || 0;
+            const total = parseFloat(r[psITotal]) || 0;
+            if (epoch > 0 && stl > 0 && total > 0) {
+              allSnaps.push({ epoch, stl, total });
+            }
+          }
+
+          // Group by epoch
+          const epochSnaps = {};
+          for (const s of allSnaps) {
+            if (!epochSnaps[s.epoch]) epochSnaps[s.epoch] = [];
+            epochSnaps[s.epoch].push(s);
+          }
+          const epochList = Object.keys(epochSnaps).map(Number);
+
+          // Time buckets to analyze
+          const timeBuckets = [20, 15, 10, 7, 5, 4, 3, 2, 1];
+
+          // Helper: find closest snapshot to target_stl within ±0.5s
+          function findClosest(snaps, targetStl) {
+            let best = null, bestDist = Infinity;
+            for (const s of snaps) {
+              const d = Math.abs(s.stl - targetStl);
+              if (d <= 0.5 && d < bestDist) { best = s; bestDist = d; }
+            }
+            return best;
+          }
+
+          // Compute T-20s baseline per epoch
+          const t20PerEpoch = {};
+          for (const epoch of epochList) {
+            const snap = findClosest(epochSnaps[epoch], 20);
+            if (snap) t20PerEpoch[epoch] = snap.total;
+          }
+
+          const bucketStats = [];
+          for (const tb of timeBuckets) {
+            const poolValues = [];
+            let stillGrowing = 0, epochsWithData = 0;
+
+            for (const epoch of epochList) {
+              const snap = findClosest(epochSnaps[epoch], tb);
+              if (!snap) continue;
+              poolValues.push(snap.total);
+
+              // "Still growing" = pool at tb > pool at (tb+1)
+              const nextBucketIdx = timeBuckets.indexOf(tb);
+              const nextTb = nextBucketIdx > 0 ? timeBuckets[nextBucketIdx - 1] : tb + 1;
+              const snapNext = findClosest(epochSnaps[epoch], nextTb);
+              epochsWithData++;
+              if (snapNext && snap.total > snapNext.total) stillGrowing++;
+            }
+
+            const avgPool = poolValues.length > 0
+              ? r2(poolValues.reduce((a, b) => a + b, 0) / poolValues.length)
+              : null;
+
+            // Growth vs T-20s baseline
+            const t20Vals = epochList
+              .filter(e => t20PerEpoch[e])
+              .map(e => {
+                const snap = findClosest(epochSnaps[e], tb);
+                return snap && t20PerEpoch[e] ? { pool: snap.total, base: t20PerEpoch[e] } : null;
+              })
+              .filter(Boolean);
+
+            const avgGrowthPct = t20Vals.length > 0
+              ? r2(t20Vals.reduce((s, v) => s + (v.pool - v.base) / v.base * 100, 0) / t20Vals.length)
+              : null;
+
+            const pctStillGrowing = epochsWithData > 0
+              ? r2(stillGrowing / epochsWithData * 100)
+              : null;
+
+            bucketStats.push({
+              tb,
+              avgPool,
+              avgGrowthPct,
+              pctStillGrowing,
+              n: poolValues.length,
+            });
+          }
+
+          poolActivityRows.push([
+            'Seconds Before Lock', 'Epochs w/ Data', 'Avg Pool Size (BNB)',
+            'Avg Growth vs T-20s', '% Epochs Still Growing',
+          ]);
+          for (const b of bucketStats) {
+            const growthStr = b.tb === 20
+              ? 'baseline'
+              : (b.avgGrowthPct !== null ? (b.avgGrowthPct >= 0 ? '+' : '') + b.avgGrowthPct + '%' : 'N/A');
+            const growingStr = b.tb === 20 ? '-' : (b.pctStillGrowing !== null ? b.pctStillGrowing + '%' : 'N/A');
+            poolActivityRows.push([
+              b.tb + 's',
+              b.n,
+              b.avgPool !== null ? b.avgPool : 'N/A',
+              growthStr,
+              growingStr,
+            ]);
+          }
+        } else {
+          poolActivityRows.push(['Missing expected columns in pool_snapshots tab']);
+        }
+      } else {
+        poolActivityRows.push(['No data in pool_snapshots tab yet']);
+      }
+    } catch (e) {
+      poolActivityRows.push([`Error loading pool_snapshots: ${e.message}`]);
+    }
+  } else {
+    poolActivityRows.push(['pool_snapshots tab not yet available']);
+  }
+
   // Build output rows
   const outputRows = [
     ['👥 CROWD ACCURACY ANALYSIS'],
@@ -542,6 +689,8 @@ async function refreshCrowdAccuracy(sheets, existingTabs) {
     [],
     ['── By Pool Size ────────────────────────────'],
     ...poolRows,
+    [],
+    ...poolActivityRows,
   ];
 
   // Hourly goes to the right (column H)
@@ -563,7 +712,7 @@ async function refreshCrowdAccuracy(sheets, existingTabs) {
   // Clear and write
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SSID,
-    range: `'${actualTab}'!A1:M60`,
+    range: `'${actualTab}'!A1:M100`,
   });
 
   await sheets.spreadsheets.values.update({
@@ -595,7 +744,7 @@ async function refreshEpochMap(sheets, existingTabs) {
   const SSID = SPREADSHEET_ID;
   // Dynamically detect strategy tabs (exclude analysis tabs)
   const analysisTabs = ['🏆 Strategy Comparison', '🔗 Cross-Strategy (Epoch)', '📊 Deep Edge Analysis', '🎯 Optimal Filters', '📈 PnL Curves', '🕐 Time Heatmap', '👥 Crowd Accuracy'];
-  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds');
+  const STRATS = existingTabs.filter(t => !analysisTabs.includes(t) && !t.startsWith('combined_') && t !== 'all_rounds' && t !== 'pool_snapshots');
   const stratTab = existingTabs.find(t => t.toLowerCase() === '🔗 cross-strategy (epoch)'.toLowerCase())
     || '🔗 Cross-Strategy (Epoch)';
 
