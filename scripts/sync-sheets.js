@@ -398,84 +398,102 @@ async function refreshDeepEdge(sheets, existingTabs) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 👥 Crowd Accuracy — analyze crowd vs actual direction for all rounds
+// 👥 Crowd Accuracy — T-Xs snapshot analysis: was the crowd right at each
+//    second before lock? Uses pool_snapshots for crowd state, all_rounds
+//    for actual outcome.
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function refreshCrowdAccuracy(sheets, existingTabs) {
   const SSID = SPREADSHEET_ID;
   const tabName = '👥 Crowd Accuracy';
 
-  // Load all_rounds data from the sheet tab
+  // ── Load all_rounds ────────────────────────────────────────────────────
   const allRoundsTab = existingTabs.find(t => t.toLowerCase() === 'all_rounds');
   if (!allRoundsTab) {
     console.log('  ⏸ Crowd Accuracy: no all_rounds tab found — skipping');
     return;
   }
 
-  let rows;
+  let arRows;
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SSID,
       range: `'${allRoundsTab}'!A1:N50000`,
     });
-    rows = res.data.values || [];
+    arRows = res.data.values || [];
   } catch (e) {
     console.log(`  ⚠️ Crowd Accuracy: could not load all_rounds: ${e.message}`);
     return;
   }
 
-  if (rows.length < 2) {
+  if (arRows.length < 2) {
     console.log('  ⏸ Crowd Accuracy: all_rounds has no data');
     return;
   }
 
-  const h = rows[0];
-  const iEpoch = h.indexOf('epoch');
-  const iLockTs = h.indexOf('lock_ts');
-  const iTotalBnb = h.indexOf('final_total_bnb');
-  const iBullPct = h.indexOf('final_bull_pct');
-  const iBearPct = h.indexOf('final_bear_pct');
-  const iConviction = h.indexOf('crowd_conviction_pct');
-  const iCrowdSide = h.indexOf('crowd_side');
-  const iActual = h.indexOf('actual_direction');
-  const iCorrect = h.indexOf('crowd_correct');
+  const arH = arRows[0];
+  const arIEpoch   = arH.indexOf('epoch');
+  const arIActual  = arH.indexOf('actual_direction');
+  const arITotal   = arH.indexOf('final_total_bnb');
 
-  if (iEpoch < 0 || iCorrect < 0) {
+  if (arIEpoch < 0 || arIActual < 0) {
     console.log('  ⏸ Crowd Accuracy: missing expected columns in all_rounds');
     return;
   }
 
-  // Parse all rounds (skip FLAT outcomes)
-  const rounds = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const actual = r[iActual] || '';
+  // Build lookups: actualByEpoch, finalTotalByEpoch
+  const actualByEpoch   = {};   // epoch → 'UP' | 'DOWN'
+  const finalTotalByEpoch = {}; // epoch → total_bnb (final)
+  for (let i = 1; i < arRows.length; i++) {
+    const r = arRows[i];
+    const actual = r[arIActual] || '';
     if (actual === 'FLAT' || actual === '') continue;
-    const correct = (r[iCorrect] || '').toLowerCase();
-    rounds.push({
-      epoch: parseInt(r[iEpoch]) || 0,
-      lock_ts: parseFloat(r[iLockTs]) || 0,
-      total_bnb: parseFloat(r[iTotalBnb]) || 0,
-      bull_pct: parseFloat(r[iBullPct]) || 0,
-      bear_pct: parseFloat(r[iBearPct]) || 0,
-      conviction: parseFloat(r[iConviction]) || 0,
-      crowd_side: r[iCrowdSide] || '',
-      actual,
-      correct: correct === 'true',
-    });
+    const epoch = parseInt(r[arIEpoch]) || 0;
+    if (!epoch) continue;
+    actualByEpoch[epoch] = actual;
+    if (arITotal >= 0) finalTotalByEpoch[epoch] = parseFloat(r[arITotal]) || 0;
   }
 
-  if (rounds.length === 0) {
-    console.log('  ⏸ Crowd Accuracy: no valid rounds to analyze');
-    return;
+  // ── Load pool_snapshots ────────────────────────────────────────────────
+  const poolSnapshotsTab = existingTabs.find(t => t.toLowerCase() === 'pool_snapshots');
+  let epochSnaps = {}; // epoch → [{stl, total_bnb, bull_pct, bear_pct}]
+
+  if (poolSnapshotsTab) {
+    try {
+      const psRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SSID,
+        range: `'${poolSnapshotsTab}'!A1:G200000`,
+      });
+      const psRows = psRes.data.values || [];
+      if (psRows.length >= 2) {
+        const psH = psRows[0];
+        const psIEpoch   = psH.indexOf('epoch');
+        const psIStl     = psH.indexOf('seconds_to_lock');
+        const psITotal   = psH.indexOf('total_bnb');
+        const psIBullPct = psH.indexOf('bull_pct');
+        const psIBearPct = psH.indexOf('bear_pct');
+
+        if (psIEpoch >= 0 && psIStl >= 0 && psITotal >= 0 && psIBullPct >= 0) {
+          for (let i = 1; i < psRows.length; i++) {
+            const r = psRows[i];
+            const epoch    = parseInt(r[psIEpoch]) || 0;
+            const stl      = parseFloat(r[psIStl])     || 0;
+            const total    = parseFloat(r[psITotal])   || 0;
+            const bull_pct = parseFloat(r[psIBullPct]) || 0;
+            const bear_pct = psIBearPct >= 0 ? (parseFloat(r[psIBearPct]) || 0) : (1 - bull_pct);
+            if (epoch > 0 && stl > 0) {
+              if (!epochSnaps[epoch]) epochSnaps[epoch] = [];
+              epochSnaps[epoch].push({ stl, total, bull_pct, bear_pct });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`  ⚠️ Crowd Accuracy: could not load pool_snapshots: ${e.message}`);
+    }
   }
 
-  const total = rounds.length;
-  const correctCount = rounds.filter(r => r.correct).length;
-  const wrongCount = total - correctCount;
-  const accuracy = total > 0 ? correctCount / total * 100 : 0;
-
-  // Section 2: Accuracy by conviction bucket
+  // ── Conviction and pool-size bucket definitions ────────────────────────
   const convBuckets = [
     { label: '50-55%', lo: 0.50, hi: 0.55 },
     { label: '55-60%', lo: 0.55, hi: 0.60 },
@@ -485,218 +503,85 @@ async function refreshCrowdAccuracy(sheets, existingTabs) {
     { label: '90%+',   lo: 0.90, hi: 1.01 },
   ];
 
-  const convRows = [
-    ['Conviction Range', 'Rounds', 'Crowd Correct', 'Crowd Wrong', 'Accuracy %', 'Avg Pool Size (BNB)'],
-  ];
-  for (const b of convBuckets) {
-    const bucket = rounds.filter(r => r.conviction >= b.lo && r.conviction < b.hi);
-    const bCorrect = bucket.filter(r => r.correct).length;
-    const bWrong = bucket.length - bCorrect;
-    const bAcc = bucket.length > 0 ? r2(bCorrect / bucket.length * 100) : 0;
-    const avgPool = bucket.length > 0 ? r2(bucket.reduce((s, r) => s + r.total_bnb, 0) / bucket.length) : 0;
-    convRows.push([b.label, bucket.length, bCorrect, bWrong, bAcc, avgPool]);
-  }
-
-  // Section 3: Accuracy by pool size bucket
-  const poolBuckets = [];
-  poolBuckets.push({ label: '< 0.5 BNB', lo: 0, hi: 0.5 });
+  const poolBuckets = [{ label: '< 0.5 BNB', lo: 0, hi: 0.5 }];
   for (let lo = 0.5; lo < 10; lo += 0.5) {
-    const hi = lo + 0.5;
-    poolBuckets.push({ label: `${lo}-${hi} BNB`, lo, hi });
+    poolBuckets.push({ label: `${lo.toFixed(1)}-${(lo + 0.5).toFixed(1)} BNB`, lo, hi: lo + 0.5 });
   }
   poolBuckets.push({ label: '10+ BNB', lo: 10, hi: 1e9 });
 
-  const poolRows = [
-    ['Pool Size', 'Rounds', 'Accuracy %'],
-  ];
-  for (const b of poolBuckets) {
-    const bucket = rounds.filter(r => r.total_bnb >= b.lo && r.total_bnb < b.hi);
-    const bCorrect = bucket.filter(r => r.correct).length;
-    const bAcc = bucket.length > 0 ? r2(bCorrect / bucket.length * 100) : 0;
-    poolRows.push([b.label, bucket.length, bAcc]);
-  }
+  // ── Build one block of rows per T-Xs ──────────────────────────────────
+  // Returns array of row-arrays for the block.
+  function buildSnapshotBlock(targetSec) {
+    const TOLERANCE = 0.5;
+    const epochList = Object.keys(epochSnaps).map(Number);
 
-  // Section 4: Hourly pattern (UTC)
-  const hourlyData = {};
-  for (let h = 0; h < 24; h++) hourlyData[h] = { rounds: [], convictionSum: 0 };
-  for (const r of rounds) {
-    if (r.lock_ts > 0) {
-      const d = new Date(r.lock_ts * 1000);
-      const hour = d.getUTCHours();
-      hourlyData[hour].rounds.push(r);
-      hourlyData[hour].convictionSum += r.conviction;
-    }
-  }
+    // For each epoch: find snapshot closest to targetSec (within ±tolerance)
+    const samples = []; // [{conviction, crowd_side, actual, total_bnb}]
 
-  const hourlyRows = [
-    ['Hour (UTC)', 'Rounds', 'Accuracy %', 'Avg Conviction %'],
-  ];
-  for (let h = 0; h < 24; h++) {
-    const bucket = hourlyData[h].rounds;
-    const bCorrect = bucket.filter(r => r.correct).length;
-    const bAcc = bucket.length > 0 ? r2(bCorrect / bucket.length * 100) : 0;
-    const avgConv = bucket.length > 0 ? r2(hourlyData[h].convictionSum / bucket.length * 100) : 0;
-    hourlyRows.push([String(h).padStart(2, '0'), bucket.length, bAcc, avgConv]);
-  }
+    for (const epoch of epochList) {
+      const actual = actualByEpoch[epoch];
+      if (!actual) continue; // no outcome for this epoch
 
-  // ── Section 5: Pool Activity Before Lock ──────────────────────────────
-  // Load pool_snapshots tab if available
-  const poolSnapshotsTab = existingTabs.find(t => t.toLowerCase() === 'pool_snapshots');
-  let poolActivityRows = [['── Pool Activity Before Lock ──']];
-
-  if (poolSnapshotsTab) {
-    try {
-      const psRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: SSID,
-        range: `'${poolSnapshotsTab}'!A1:G200000`,
-      });
-      const psRows = psRes.data.values || [];
-
-      if (psRows.length >= 2) {
-        const psH = psRows[0];
-        const psIEpoch = psH.indexOf('epoch');
-        const psIStl = psH.indexOf('seconds_to_lock');
-        const psITotal = psH.indexOf('total_bnb');
-
-        if (psIEpoch >= 0 && psIStl >= 0 && psITotal >= 0) {
-          // Parse all snapshots
-          const allSnaps = [];
-          for (let i = 1; i < psRows.length; i++) {
-            const r = psRows[i];
-            const epoch = parseInt(r[psIEpoch]) || 0;
-            const stl = parseFloat(r[psIStl]) || 0;
-            const total = parseFloat(r[psITotal]) || 0;
-            if (epoch > 0 && stl > 0 && total > 0) {
-              allSnaps.push({ epoch, stl, total });
-            }
-          }
-
-          // Group by epoch
-          const epochSnaps = {};
-          for (const s of allSnaps) {
-            if (!epochSnaps[s.epoch]) epochSnaps[s.epoch] = [];
-            epochSnaps[s.epoch].push(s);
-          }
-          const epochList = Object.keys(epochSnaps).map(Number);
-
-          // Time buckets to analyze
-          const timeBuckets = [20, 15, 10, 7, 5, 4, 3, 2, 1];
-
-          // Helper: find closest snapshot to target_stl within ±0.5s
-          function findClosest(snaps, targetStl) {
-            let best = null, bestDist = Infinity;
-            for (const s of snaps) {
-              const d = Math.abs(s.stl - targetStl);
-              if (d <= 0.5 && d < bestDist) { best = s; bestDist = d; }
-            }
-            return best;
-          }
-
-          // Compute T-20s baseline per epoch
-          const t20PerEpoch = {};
-          for (const epoch of epochList) {
-            const snap = findClosest(epochSnaps[epoch], 20);
-            if (snap) t20PerEpoch[epoch] = snap.total;
-          }
-
-          const bucketStats = [];
-          for (const tb of timeBuckets) {
-            const poolValues = [];
-            let stillGrowing = 0, epochsWithData = 0;
-
-            for (const epoch of epochList) {
-              const snap = findClosest(epochSnaps[epoch], tb);
-              if (!snap) continue;
-              poolValues.push(snap.total);
-
-              // "Still growing" = pool at tb > pool at (tb+1)
-              const nextBucketIdx = timeBuckets.indexOf(tb);
-              const nextTb = nextBucketIdx > 0 ? timeBuckets[nextBucketIdx - 1] : tb + 1;
-              const snapNext = findClosest(epochSnaps[epoch], nextTb);
-              epochsWithData++;
-              if (snapNext && snap.total > snapNext.total) stillGrowing++;
-            }
-
-            const avgPool = poolValues.length > 0
-              ? r2(poolValues.reduce((a, b) => a + b, 0) / poolValues.length)
-              : null;
-
-            // Growth vs T-20s baseline
-            const t20Vals = epochList
-              .filter(e => t20PerEpoch[e])
-              .map(e => {
-                const snap = findClosest(epochSnaps[e], tb);
-                return snap && t20PerEpoch[e] ? { pool: snap.total, base: t20PerEpoch[e] } : null;
-              })
-              .filter(Boolean);
-
-            const avgGrowthPct = t20Vals.length > 0
-              ? r2(t20Vals.reduce((s, v) => s + (v.pool - v.base) / v.base * 100, 0) / t20Vals.length)
-              : null;
-
-            const pctStillGrowing = epochsWithData > 0
-              ? r2(stillGrowing / epochsWithData * 100)
-              : null;
-
-            bucketStats.push({
-              tb,
-              avgPool,
-              avgGrowthPct,
-              pctStillGrowing,
-              n: poolValues.length,
-            });
-          }
-
-          poolActivityRows.push([
-            'Seconds Before Lock', 'Epochs w/ Data', 'Avg Pool Size (BNB)',
-            'Avg Growth vs T-20s', '% Epochs Still Growing',
-          ]);
-          for (const b of bucketStats) {
-            const growthStr = b.tb === 20
-              ? 'baseline'
-              : (b.avgGrowthPct !== null ? (b.avgGrowthPct >= 0 ? '+' : '') + b.avgGrowthPct + '%' : 'N/A');
-            const growingStr = b.tb === 20 ? '-' : (b.pctStillGrowing !== null ? b.pctStillGrowing + '%' : 'N/A');
-            poolActivityRows.push([
-              b.tb + 's',
-              b.n,
-              b.avgPool !== null ? b.avgPool : 'N/A',
-              growthStr,
-              growingStr,
-            ]);
-          }
-        } else {
-          poolActivityRows.push(['Missing expected columns in pool_snapshots tab']);
-        }
-      } else {
-        poolActivityRows.push(['No data in pool_snapshots tab yet']);
+      const snaps = epochSnaps[epoch];
+      let best = null;
+      let bestDist = Infinity;
+      for (const s of snaps) {
+        const dist = Math.abs(s.stl - targetSec);
+        if (dist < bestDist) { bestDist = dist; best = s; }
       }
-    } catch (e) {
-      poolActivityRows.push([`Error loading pool_snapshots: ${e.message}`]);
+      if (!best || bestDist > TOLERANCE) continue;
+
+      const bull_pct  = best.bull_pct;
+      const bear_pct  = best.bear_pct;
+      const conviction = Math.max(bull_pct, bear_pct);
+      const crowd_side = bull_pct >= bear_pct ? 'UP' : 'DOWN';
+
+      samples.push({ conviction, crowd_side, actual, total_bnb: best.total });
     }
-  } else {
-    poolActivityRows.push(['pool_snapshots tab not yet available']);
+
+    const total = samples.length;
+    const correctCount = samples.filter(s => s.crowd_side === s.actual).length;
+    const wrongCount   = total - correctCount;
+    const accuracy     = total > 0 ? r2(correctCount / total * 100) : 0;
+
+    const rows = [];
+    rows.push([`══ CROWD ACCURACY AT T-${targetSec}s ══`]);
+    rows.push([`Epochs analyzed: ${total}`]);
+    rows.push([`Crowd correct: ${accuracy}%`]);
+    rows.push([`Crowd wrong: ${total > 0 ? r2(wrongCount / total * 100) : 0}%`]);
+    rows.push([]);
+
+    // Conviction table
+    rows.push(['Conviction', 'Rounds', 'Correct', 'Wrong', 'Accuracy%']);
+    for (const b of convBuckets) {
+      const bucket  = samples.filter(s => s.conviction >= b.lo && s.conviction < b.hi);
+      const bCorr   = bucket.filter(s => s.crowd_side === s.actual).length;
+      const bWrong  = bucket.length - bCorr;
+      const bAcc    = bucket.length > 0 ? r2(bCorr / bucket.length * 100) : '';
+      rows.push([b.label, bucket.length, bCorr, bWrong, bAcc]);
+    }
+    rows.push([]);
+
+    // Pool size table
+    rows.push(['Pool Size', 'Rounds', 'Accuracy%']);
+    for (const b of poolBuckets) {
+      const bucket = samples.filter(s => s.total_bnb >= b.lo && s.total_bnb < b.hi);
+      const bCorr  = bucket.filter(s => s.crowd_side === s.actual).length;
+      const bAcc   = bucket.length > 0 ? r2(bCorr / bucket.length * 100) : '';
+      rows.push([b.label, bucket.length, bAcc]);
+    }
+    rows.push([]);
+
+    return rows;
   }
 
-  // Build output rows
-  const outputRows = [
-    ['👥 CROWD ACCURACY ANALYSIS'],
-    [`Total rounds analyzed: ${total}`],
-    [`Crowd correct: ${r2(accuracy)}%`],
-    [`Crowd wrong: ${r2(100 - accuracy)}%`],
-    [],
-    ['── By Conviction ──────────────────────────'],
-    ...convRows,
-    [],
-    ['── By Pool Size ────────────────────────────'],
-    ...poolRows,
-    [],
-    ...poolActivityRows,
-  ];
+  // ── Compute column letter helper ───────────────────────────────────────
+  function colLetter(n) { // 0-indexed: 0=A, 25=Z, 26=AA …
+    if (n < 26) return String.fromCharCode(65 + n);
+    return colLetter(Math.floor(n / 26) - 1) + String.fromCharCode(65 + (n % 26));
+  }
 
-  // Hourly goes to the right (column H)
-  const hourlyColRows = [['── Hourly Pattern (UTC) ────────────────────'], ...hourlyRows];
-
-  // Create tab if needed
+  // ── Create/ensure tab ─────────────────────────────────────────────────
   const tabExists = existingTabs.some(t => t.toLowerCase() === tabName.toLowerCase());
   if (!tabExists) {
     await sheets.spreadsheets.batchUpdate({
@@ -706,32 +591,114 @@ async function refreshCrowdAccuracy(sheets, existingTabs) {
     existingTabs.push(tabName);
     console.log(`  📄 Created tab: ${tabName}`);
   }
-
   const actualTab = existingTabs.find(t => t.toLowerCase() === tabName.toLowerCase()) || tabName;
 
-  // Clear and write
+  // Clear full range (A:Z within first 500 rows)
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SSID,
-    range: `'${actualTab}'!A1:M100`,
+    range: `'${actualTab}'!A1:Z500`,
   });
+  await sleep(1200);
+
+  // ── Write T-7s…T-1s stacked vertically ───────────────────────────────
+  // Stacking is more readable on a narrow sheet (26 col limit).
+  const T_VALUES = [7, 6, 5, 4, 3, 2, 1];
+  const allBlockRows = [];
+  allBlockRows.push(['👥 CROWD ACCURACY ANALYSIS — by snapshot second before lock']);
+  allBlockRows.push([]);
+
+  for (const t of T_VALUES) {
+    const blockRows = buildSnapshotBlock(t);
+    for (const row of blockRows) allBlockRows.push(row);
+  }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SSID,
     range: `'${actualTab}'!A1`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: outputRows },
+    requestBody: { values: allBlockRows },
   });
+  await sleep(1200);
 
-  await sleep(1000);
+  // ── Pool Activity — "When Do People Stop Betting?" ───────────────────
+  // Written just after the T-Xs blocks
+  const poolActivityStartRow = allBlockRows.length + 2;
+  let poolActivityRows = [['── When Do People Stop Betting? ──']];
+
+  const epochList = Object.keys(epochSnaps).map(Number);
+  if (epochList.length > 0) {
+    const lastChangeSecs = [];
+    const poolChanges = {};
+    for (let sec = 1; sec <= 20; sec++) poolChanges[sec] = 0;
+
+    for (const epoch of epochList) {
+      const snaps = epochSnaps[epoch].sort((a, b) => b.stl - a.stl);
+      let prevTotal = null;
+      let lastChangeSec = null;
+      for (const s of snaps) {
+        if (prevTotal !== null && Math.abs(s.total - prevTotal) > 0.0001) {
+          lastChangeSec = s.stl;
+          const secBucket = Math.round(s.stl);
+          if (secBucket >= 1 && secBucket <= 20) poolChanges[secBucket]++;
+        }
+        prevTotal = s.total;
+      }
+      if (lastChangeSec !== null) lastChangeSecs.push(lastChangeSec);
+    }
+
+    if (lastChangeSecs.length > 0) {
+      lastChangeSecs.sort((a, b) => a - b);
+      const avg    = r2(lastChangeSecs.reduce((a, b) => a + b, 0) / lastChangeSecs.length);
+      const median = r2(lastChangeSecs[Math.floor(lastChangeSecs.length / 2)]);
+      const minV   = r2(Math.min(...lastChangeSecs));
+      const maxV   = r2(Math.max(...lastChangeSecs));
+      const n      = lastChangeSecs.length;
+
+      poolActivityRows.push(['Epochs analyzed:', n]);
+      poolActivityRows.push(['Last bet placed (avg):', avg + 's before lock']);
+      poolActivityRows.push(['Last bet placed (median):', median + 's before lock']);
+      poolActivityRows.push(['Last bet placed (earliest):', maxV + 's before lock']);
+      poolActivityRows.push(['Last bet placed (latest):', minV + 's before lock']);
+      poolActivityRows.push([]);
+
+      poolActivityRows.push(['When is the pool final?']);
+      poolActivityRows.push(['Threshold', '% Epochs Pool Already Final', 'Recommendation']);
+      for (const sec of [1, 2, 3, 4, 5, 7, 10]) {
+        const pct     = r2(lastChangeSecs.filter(x => x >= sec).length / n * 100);
+        const settled = 100 - pct;
+        let reco = '';
+        if (settled >= 95)      reco = '✅ Very safe to bet here';
+        else if (settled >= 80) reco = '✅ Safe';
+        else if (settled >= 60) reco = '⚠️ Pool still moves sometimes';
+        else if (settled >= 40) reco = '⚠️ Pool often still changing';
+        else                    reco = '❌ Too early — pool still actively changing';
+        poolActivityRows.push([`T-${sec}s`, settled + '%', reco]);
+      }
+      poolActivityRows.push([]);
+
+      poolActivityRows.push(['Betting activity by second:']);
+      poolActivityRows.push(['Second Before Lock', '% Epochs With New Bet']);
+      for (let sec = 1; sec <= 10; sec++) {
+        const pct = epochList.length > 0 ? r2(poolChanges[sec] / epochList.length * 100) : 0;
+        poolActivityRows.push([`T-${sec}s`, pct + '%']);
+      }
+    } else {
+      poolActivityRows.push(['No pool changes detected in snapshot data']);
+    }
+  } else {
+    poolActivityRows.push(['pool_snapshots tab not yet available — restart bot to collect data']);
+  }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SSID,
-    range: `'${actualTab}'!H1`,
+    range: `'${actualTab}'!A${poolActivityStartRow}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: hourlyColRows },
+    requestBody: { values: poolActivityRows },
   });
 
-  console.log(`  ✅ Crowd Accuracy refreshed: ${total} rounds, accuracy=${r2(accuracy)}%`);
+  const totalRounds = Object.keys(actualByEpoch).length;
+  const snapshotEpochs = Object.keys(epochSnaps).length;
+  console.log(`  ✅ Crowd Accuracy refreshed: ${totalRounds} rounds in all_rounds, ${snapshotEpochs} epochs with snapshots`);
 }
 
 
